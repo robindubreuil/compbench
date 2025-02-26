@@ -34,7 +34,7 @@ Compbench is a comprehensive Python tool designed to evaluate and compare the pe
 ### System Packages (Debian 12)
 
 ```bash
-sudo apt update && sudo apt install python3 python3-psutil xz-utils pv btrfs-progs gdisk
+sudo apt update && sudo apt install python3 python3-psutil xz-utils pv btrfs-progs btrfs-compsize gdisk
 ```
 
 > **Note:**  

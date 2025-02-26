@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Robin-DUBREUIL/compbench/main/logo.svg" alt="Compbench Logo" width="300">
+</p>
+
 # Compbench – An Exhaustive Benchmark for Btrfs Transparent Compression
 
 Compbench is a comprehensive Python tool designed to evaluate and compare the performance of Btrfs transparent compression algorithms. It allows you to benchmark different compression methods (e.g., zstd, lzo, none) under various conditions, providing detailed metrics and comparative results—all while offering a user-friendly interface with a minimal output mode for beginners.

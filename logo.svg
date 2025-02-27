@@ -18,5 +18,5 @@
   <circle cx="180" cy="90" r="5" fill="white"/>
 
   <!-- Text -->
-  <text x="130" y="130" font-family="sans-serif" font-size="22" font-weight="bold" fill="white">Compbench</text>
+  <text x="130" y="130" font-family="sans-serif" font-size="22" font-weight="bold" fill="white">compbench</text>
 </svg>

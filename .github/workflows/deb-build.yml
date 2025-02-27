@@ -1,16 +1,16 @@
-name: Build Debian Package
+name: Create Release and Upload Deb Package
 
 on:
   push:
     tags:
-      - 'v*'  # Trigger on tags starting with "v"
+      - 'v*'  # Trigger on tags starting with "v", e.g. v1.0rc1-1
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Install Build Dependencies
@@ -19,13 +19,25 @@ jobs:
           sudo apt-get install -y dpkg-dev debhelper build-essential fakeroot
 
       - name: Build Debian Package
-        run: dpkg-buildpackage -us -uc
+        run: |
+          dpkg-buildpackage -us -uc
+          # Move the generated deb package from the parent directory into the workspace
+          mv ../compbench_*.deb ./
 
-      - name: Move Debian Package to Workspace
-        run: mv ../compbench_*.deb ./
-
-      - name: Upload Debian Package Artifact
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        id: create_release
+        uses: ncipollo/release-action@v1
         with:
-          name: compbench-deb
-          path: compbench_*.deb
+          tag: ${{ github.ref }}
+          name: ${{ github.ref }}
+          body: "Compbench release ${{ github.ref }} is now available!"
+
+      - name: Upload Debian Package Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: compbench_*.deb
+          asset_name: compbench.deb
+          asset_content_type: application/x-debian-package

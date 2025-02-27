@@ -33,6 +33,36 @@ Compbench is a comprehensive Python tool designed to evaluate and compare the pe
 - **Detailed Results & CSV Export:**  
   Final results include throughput, compression ratios, CPU load, and best-case summaries. In `--force both` mode, a comparison table shows percentage differences between standard and force variants. All results, along with archive metadata, can be exported to CSV.
 
+## Installation
+
+To install the latest Compbench Debian package on your Debian/Ubuntu system, follow these steps:
+
+1. **Download the Package:**  
+   Download the latest `.deb` file from the [GitHub Releases](https://github.com/Robin-DUBREUIL/compbench/releases) page.
+
+2. **Install the Package:**  
+   Open a terminal, navigate to the directory containing the downloaded package, and run:
+
+   ```bash
+   sudo dpkg -i compbench_1.0rc1-1_all.deb
+   ```
+
+3. **Fix Missing Dependencies (if necessary):**  
+   If any dependencies are missing, run:
+
+   ```bash
+   sudo apt-get install -f
+   ```
+
+4. **Usage:**  
+   Once installed, you can run Compbench by simply executing:
+
+   ```bash
+   compbench --help
+   ```
+
+*Note:* Replace `compbench_1.0rc1-1_all.deb` with the actual name of the package if it differs.
+
 ## Requirements
 
 ### System Packages (Debian 12)

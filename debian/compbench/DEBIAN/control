@@ -1,0 +1,14 @@
+Package: compbench
+Version: 1.0rc1-1
+Architecture: all
+Maintainer: Robin DUBREUIL <63008968+robindubreuil@users.noreply.github.com>
+Installed-Size: 37
+Depends: python3 (>= 3.6), python3-psutil, xz-utils, pv, btrfs-progs, btrfs-compsize, gdisk, tar, util-linux
+Section: utils
+Priority: optional
+Homepage: https://github.com/Robin-DUBREUIL/compbench/
+Description: An exhaustive benchmark for Btrfs transparent compression
+ Compbench is a comprehensive benchmarking tool for evaluating Btrfs transparent
+ compression algorithms. It tests various compression methods (e.g., zstd, lzo, none)
+ and levels, with options for repeated tests, forced compression modes, HDD zone testing,
+ and synchronized writes. The tool outputs detailed performance metrics and supports CSV export.

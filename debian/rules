@@ -1,0 +1,15 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	echo "Nothing to build."
+
+override_dh_auto_install:
+	mkdir -p debian/compbench/usr/bin
+	cp compbench.py debian/compbench/usr/bin/compbench
+	chmod 755 debian/compbench/usr/bin/compbench
+
+override_dh_usrlocal:
+	# Prevent installing into /usr/local

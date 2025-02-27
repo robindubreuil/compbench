@@ -1,0 +1,25 @@
+name: Build Debian Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: sudo apt install -y dpkg-dev debhelper build-essential fakeroot
+
+      - name: Build package
+        run: dpkg-buildpackage -us -uc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: debian-package
+          path: ../compbench_*.deb

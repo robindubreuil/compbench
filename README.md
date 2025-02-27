@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Robin-DUBREUIL/compbench/main/logo.svg" alt="Compbench Logo" width="300">
+  <img src="https://raw.githubusercontent.com/robindubreuil/compbench/main/logo.svg" alt="Compbench Logo" width="300">
 </p>
 
 # An exhaustive benchmark for Btrfs transparent compression
@@ -38,7 +38,7 @@ Compbench is a comprehensive Python tool designed to evaluate and compare the pe
 To install the latest Compbench Debian package on your Debian/Ubuntu system, follow these steps:
 
 1. **Download the Package:**  
-   Download the latest `.deb` file from the [GitHub Releases](https://github.com/Robin-DUBREUIL/compbench/releases) page.
+   Download the latest `.deb` file from the [GitHub Releases](https://github.com/robindubreuil/compbench/releases) page.
 
 2. **Install the Package:**  
    Open a terminal, navigate to the directory containing the downloaded package, and run:

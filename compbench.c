@@ -464,7 +464,8 @@ copy_tree(const char *src, const char *dst)
 				continue;
 			target[len] = '\0';
 			unlink(dp);
-			symlink(target, dp);
+			if (symlink(target, dp) < 0)
+				continue;
 		} else {
 			continue;
 		}

@@ -4,86 +4,41 @@
 
 # An exhaustive benchmark for Btrfs transparent compression
 
-Compbench is a comprehensive Python tool designed to evaluate and compare the performance of Btrfs transparent compression algorithms. It allows you to benchmark different compression methods (e.g., zstd, lzo, none) under various conditions, providing detailed metrics and comparative results—all while offering a user-friendly interface with a minimal output mode for beginners.
+Compbench is a C tool that benchmarks Btrfs compression algorithms (zstd, lzo) by measuring write throughput, compression ratio, CPU usage, and disk I/O — all through direct kernel interfaces with zero text parsing of external tool output.
 
 ## Features
 
-- **Exhaustive Testing:**  
-  Test a full range of zstd levels (configurable with `--max-zstd`), as well as lzo and no compression.
-
-- **Repeatable Benchmarks:**  
-  Repeat the entire test sequence multiple times (`-n`/`--repeat`) to obtain averaged, reliable results.
-
-- **Force Mode Options:**  
-  Use standard `compress` or force `compress-force` modes (via `-f`/`--force` with options `none`, `zstd`, `lzo`, `all`, or `both`).  
-  When `--force both` is selected, the tool runs each test twice (standard and force) and compares the results.
-
-- **HDD Testing:**  
-  Optionally test on specific zones of a disk using the `--hdd` parameter (e.g., first and last *n*% of the disk) to evaluate spatial performance variations.
-
-- **RAM Estimation & Warning:**  
-  Before starting, the script estimates the required RAM based on the decompressed size of the archive and warns the user if available memory might be insufficient. The script also calculates the total volume of data that will be written to the target disk (based on the decompressed archive size and the number of tests) and warns the user accordingly.
-
-- **Synchronized Writes Option:**  
-  An optional sync mode can be enabled (using an extra argument, e.g., `-s`) to wait until the disk is fully synchronized before measuring performance. This reflects more realistic write performance.
-
-- **Minimal & Verbose Modes:**  
-  In non-verbose mode, the script updates the status on a single line to provide a clean, minimal interface. Verbose mode (`-v`/`--verbose`) displays detailed logs.
-
-- **Detailed Results & CSV Export:**  
-  Final results include throughput, compression ratios, CPU load, and best-case summaries. In `--force both` mode, a comparison table shows percentage differences between standard and force variants. All results, along with archive metadata, can be exported to CSV.
-
-## Installation
-
-To install the latest Compbench Debian package on your Debian/Ubuntu system, follow these steps:
-
-1. **Download the Package:**  
-   Download the latest `.deb` file from the [GitHub Releases](https://github.com/robindubreuil/compbench/releases) page.
-
-2. **Install the Package:**  
-   Open a terminal, navigate to the directory containing the downloaded package, and run:
-
-   ```bash
-   sudo dpkg -i compbench_1.0rc1-1_all.deb
-   ```
-
-3. **Fix Missing Dependencies (if necessary):**  
-   If any dependencies are missing, run:
-
-   ```bash
-   sudo apt-get install -f
-   ```
-
-4. **Usage:**  
-   Once installed, you can run Compbench by simply executing:
-
-   ```bash
-   compbench --help
-   ```
-
-*Note:* Replace `compbench_1.0rc1-1_all.deb` with the actual name of the package if it differs.
+- **Direct kernel interfaces** — compression ratio via `statvfs()`, CPU via `/proc/stat`, disk I/O via `/sys/block/*/stat`, timing via `clock_gettime(CLOCK_MONOTONIC_RAW)`, data copy via `copy_file_range()`
+- **Exhaustive testing** — configurable zstd level range (1-19), lzo, and no compression
+- **Force mode comparison** — run standard `compress` and/or `compress-force` mount options, with a side-by-side percentage comparison table
+- **HDD zone testing** — benchmark first/last N% of disk to evaluate spatial performance variations, with interpolated results
+- **Repeatable** — average results over multiple runs for reliability
+- **Sync and non-sync metrics** — both are measured automatically (no flag needed)
+- **Disk-level I/O stats** — actual bytes written to physical media, separate from apparent throughput
+- **CSV export** — machine-readable output with full metadata
 
 ## Requirements
 
-### System Packages (Debian 12)
+### System Packages (Debian/Ubuntu)
 
 ```bash
-sudo apt update && sudo apt install python3 python3-psutil xz-utils pv btrfs-progs btrfs-compsize gdisk
+sudo apt install gcc make btrfs-progs xz-utils gdisk curl
 ```
 
-> **Note:**  
-> The `tar` and `blockdev` commands (provided by `util-linux`) are usually installed by default.
+`tar` and `util-linux` are typically installed by default.
 
-### Python Modules
+## Building
 
-- [psutil](https://pypi.org/project/psutil/)  
-  Install via `pip install psutil` if not available.
+```bash
+make
+sudo make install
+```
+
+The binary is dynamically linked against `libm` and `libc` only.
 
 ## Usage
 
-> **Warning:**  
-> **This script formats the specified disk, erasing all existing data.**  
-> Use it on a test disk or in a controlled environment.
+> **Warning:** This tool formats the target device, erasing all existing data.
 
 ### Basic Command
 
@@ -93,66 +48,86 @@ sudo compbench /dev/sdX https://example.com/archive.tar.xz
 
 ### Command-Line Options
 
-- `-v, --verbose`  
-  Enable detailed logging output.
+```
+Usage: compbench [OPTIONS] DEVICE ARCHIVE
 
-- `-n, --repeat <number>`  
-  Number of times to repeat the test sequence (default: 1).
+DEVICE is the block device to test (e.g. /dev/sdX).
+ARCHIVE is a local path or URL to a .tar.xz archive.
 
-- `--max-zstd <level>`  
-  Maximum zstd level to test (default: 15).
+Options:
+  -n, --repeat N          Repeat each test N times (default: 1)
+      --zstd MIN-MAX      zstd level range (default: 1-15)
+  -f, --force MODE        Force mode: none|zstd|lzo|all|both (default: none)
+      --hdd PERCENT       Test on first/last N% of disk (1-50)
+  -o, --output FILE       Export results to CSV
+      --no-integrity-check
+                         Skip archive integrity verification
+  -v, --verbose           Verbose output
+  -h, --help              Show help
+  -V, --version           Show version
+```
 
-- `-f, --force <option>`  
-  Force option for compression mode. Options:  
-  - `none` (default): Use standard `compress` for all tests.  
-  - `zstd`: Use `compress-force` for zstd tests only.  
-  - `lzo`: Use `compress-force` for lzo tests only.  
-  - `all`: Force `compress-force` for all tests.  
-  - `both`: Run tests twice (standard and force mode) for comparison.
+### Force Modes
 
-- `--hdd <percentage>`  
-  Specify the percentage of the disk to use for each partition (between 1 and 50).  
-  For example, `--hdd 10` tests on the first 10% and last 10% of the disk.
-
-- `--nointegritycheck`  
-  Skip the integrity check of the xz archive.
-
-- `-s, --sync`  
-  Measure performance after forcing disk synchronization (using `sync`), providing lower throughput numbers that better reflect real-world write performance.
+| Mode | Effect |
+|------|--------|
+| `none` | Standard `compress=` for all tests |
+| `zstd` | `compress-force=` for zstd, standard for lzo |
+| `lzo` | `compress-force=` for lzo, standard for zstd |
+| `all` | `compress-force=` for all algorithms |
+| `both` | Run each test twice (standard + force) and show comparison |
 
 ### Example
 
 ```bash
-sudo compbench /dev/sdX https://example.com/archive.tar.xz -n 3 --max-zstd 10 -f both --hdd 10 -v
+sudo compbench /dev/sdX https://example.com/archive.tar.xz -n 3 --zstd 1-10 -f both --hdd 10 -v
 ```
 
-This command will:
-- Test on `/dev/sdX` using the archive from the given URL.
-- Repeat the entire sequence 3 times.
-- Test zstd compression levels from 10 down to 1, plus lzo and no compression.
-- Run each test twice (standard and force mode), and compare the two.
-- Partition the disk to test on the first and last 10%.
-- Run in verbose mode.
+This will:
+- Test zstd levels 10 down to 1, plus lzo and no compression
+- Repeat the sequence 3 times with averaged results
+- Run both standard and force modes with a comparison table
+- Test on the first and last 10% of the disk
+- Run in verbose mode
 
-## How It Works
+### Measured Metrics
 
-1. **Preparation:**  
-   The script downloads the archive and, if possible, checks its size via an HTTP HEAD request (or using `file://` for local files). It estimates the required RAM based on the decompressed size and warns the user if available memory may be insufficient.
+All metrics use kernel interfaces directly:
 
-2. **Extraction:**  
-   The archive is extracted into a tmpfs (RAM disk) sized according to the decompressed data, ensuring a consistent, isolated dataset for testing.
+| Column | Description | Source |
+|--------|-------------|--------|
+| MiB/s | Apparent write throughput | `clock_gettime` + `copy_file_range` |
+| Sync | Write throughput including `sync()` | `clock_gettime` |
+| Read | Read throughput after cache clear (unmount/remount + full tree read) | `clock_gettime` |
+| Disk* | Actual bytes written to physical media | `/sys/block/*/stat` |
+| RdDisk* | Actual bytes read from physical media | `/sys/block/*/stat` |
+| Ratio | Space consumed vs uncompressed | `statvfs` |
+| CPU% | System CPU usage during write | `/proc/stat` |
+| RdCPU% | System CPU usage during read | `/proc/stat` |
+| Sec/Red | Seconds per 1% space reduction | Derived |
 
-3. **Testing:**  
-   The script formats the target disk (or partitions in HDD mode), mounts it with Btrfs using the chosen compression options, and copies data from the tmpfs while measuring throughput, CPU load, and disk usage (via `compsize`).
+## Installation (Debian Package)
 
-4. **Results & Comparison:**  
-   Results are aggregated and averaged (if tests are repeated) and displayed in detailed tables. In `--force both` mode, additional tables compare standard vs. force modes, highlighting percentage differences.
+Download the `.deb` from [GitHub Releases](https://github.com/robindubreuil/compbench/releases) and install:
 
-5. **CSV Export:**  
-   All results and metadata (archive URL, decompressed size, archive size, overall compression factor, and test parameters) can be exported to a CSV file.
+```bash
+sudo dpkg -i compbench_*.deb
+sudo apt-get install -f
+```
 
-6. **Minimal Interface:**  
-   In non-verbose mode, progress is shown as a single, updating line (e.g., "Downloading archive...") so that the output remains clean. Detailed results are displayed at the end.
+## Building a Debian Package
+
+```bash
+dpkg-buildpackage -us -uc
+```
+
+## Running Tests
+
+The test suite uses loop devices (no real disks needed):
+
+```bash
+sudo bash test.sh
+```
 
 ## Contributing
 
@@ -160,4 +135,4 @@ Contributions, bug reports, and suggestions are welcome! Please open an issue or
 
 ## License
 
-This project is licensed under the GNU GPL v3 License.
+GNU General Public License v3.0

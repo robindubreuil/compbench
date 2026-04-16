@@ -1,15 +1,15 @@
 #!/usr/bin/make -f
 
+export DH_VERBOSE = 1
+
 %:
 	dh $@
 
 override_dh_auto_build:
-	echo "Nothing to build."
+	$(MAKE) CFLAGS="-Wall -Wextra -O2 -D_FILE_OFFSET_BITS=64"
 
 override_dh_auto_install:
-	mkdir -p debian/compbench/usr/bin
-	cp compbench.py debian/compbench/usr/bin/compbench
-	chmod 755 debian/compbench/usr/bin/compbench
+	$(MAKE) install DESTDIR=debian/compbench PREFIX=/usr
 
 override_dh_usrlocal:
 	# Prevent installing into /usr/local

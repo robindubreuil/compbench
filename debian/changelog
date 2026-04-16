@@ -1,3 +1,13 @@
+compbench (2.0-1) unstable; urgency=medium
+
+  * Rewrite in C with direct kernel interface measurements.
+  * Removed dependencies: python3, python3-psutil, pv, btrfs-compsize.
+  * Compression ratio via statvfs, CPU via /proc/stat, disk I/O via sysfs.
+  * Data copy via copy_file_range() syscall.
+  * CLI redesigned: --zstd MIN-MAX range, --no-integrity-check, etc.
+
+ -- Robin DUBREUIL <63008968+robindubreuil@users.noreply.github.com>  Thu, 16 Apr 2026 12:00:00 +0000
+
 compbench (1.0rc1-1) unstable; urgency=medium
 
   * Initial release candidate of compbench.

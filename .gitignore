@@ -1,0 +1,10 @@
+compbench
+*.o
+*.deb
+*.buildinfo
+*.changes
+debian/compbench/
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/*.substvars

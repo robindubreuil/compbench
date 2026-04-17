@@ -1,3 +1,12 @@
+compbench (2.1-1) unstable; urgency=medium
+
+  * Multi-architecture CI: build .deb packages for amd64, i386, arm64,
+    armhf and armel using Docker + QEMU.
+  * Update GitHub Actions to Node.js 24 (checkout@v6, upload-artifact@v5,
+    setup-qemu-action@v4).
+
+ -- Robin DUBREUIL <63008968+robindubreuil@users.noreply.github.com>  Fri, 17 Apr 2026 07:28:28 +0000
+
 compbench (2.0-1) unstable; urgency=medium
 
   * Rewrite in C with direct kernel interface measurements.

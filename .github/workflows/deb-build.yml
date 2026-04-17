@@ -9,30 +9,72 @@ on:
 
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - debarch: amd64
+            platform: linux/amd64
+            native: true
+          - debarch: i386
+            platform: linux/i386
+            native: false
+          - debarch: arm64
+            platform: linux/arm64
+            native: false
+          - debarch: armhf
+            platform: linux/arm/v7
+            native: false
+          - debarch: armel
+            platform: linux/arm/v5
+            native: false
+
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Install Build Dependencies
+      - name: Install Build Dependencies (Native amd64)
+        if: matrix.native
         run: |
           sudo apt-get update
           sudo apt-get install -y dpkg-dev debhelper build-essential fakeroot btrfs-progs xz-utils gdisk curl
 
-      - name: Build
+      - name: Build (Native amd64)
+        if: matrix.native
         run: make
 
-      - name: Run Tests
+      - name: Run Tests (Native amd64)
+        if: matrix.native
         run: sudo bash test.sh
 
-      - name: Build Debian Package
+      - name: Build Debian Package (Native amd64)
+        if: matrix.native
         run: |
           dpkg-buildpackage -us -uc
           mv ../compbench_*.deb ./
 
+      - name: Set up QEMU (Cross-arch)
+        if: ${{ !matrix.native }}
+        uses: docker/setup-qemu-action@v4
+
+      - name: Build Debian Package (Cross-arch ${{ matrix.debarch }})
+        if: ${{ !matrix.native }}
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} \
+            -v "$PWD:/src" -w /src \
+            debian:bookworm \
+            bash -c "
+              set -e
+              apt-get update
+              apt-get install -y dpkg-dev debhelper build-essential fakeroot gcc make
+              dpkg-buildpackage -us -uc
+              mv ../compbench_*.deb ./
+            "
+
       - name: Upload Debian Package Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
-          name: compbench-deb
+          name: compbench-deb-${{ matrix.debarch }}
           path: compbench_*.deb

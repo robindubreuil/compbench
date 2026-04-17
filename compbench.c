@@ -147,18 +147,12 @@ verbose(const char *fmt, ...)
 static void
 status(const char *fmt, ...)
 {
-	if (g_cfg.verbose) {
-		va_list ap;
-		va_start(ap, fmt);
-		vprintf(fmt, ap);
-		va_end(ap);
-	} else {
+	va_list ap;
+	va_start(ap, fmt);
+	if (!g_cfg.verbose && isatty(STDOUT_FILENO))
 		printf("\033[K\r");
-		va_list ap;
-		va_start(ap, fmt);
-		vprintf(fmt, ap);
-		va_end(ap);
-	}
+	vprintf(fmt, ap);
+	va_end(ap);
 	fflush(stdout);
 }
 
@@ -176,6 +170,22 @@ bytes_human(unsigned long long bytes)
 	return buf;
 }
 
+static void
+format_time(double seconds, char *buf, size_t sz)
+{
+	if (seconds < 0)
+		seconds = 0;
+	int h = (int)seconds / 3600;
+	int m = ((int)seconds % 3600) / 60;
+	int s = (int)seconds % 60;
+	if (h > 0)
+		snprintf(buf, sz, "%dh%02dm", h, m);
+	else if (m > 0)
+		snprintf(buf, sz, "%dm%02ds", m, s);
+	else
+		snprintf(buf, sz, "%ds", s);
+}
+
 /* ------------------------------------------------------------------ */
 /* Timing                                                             */
 /* ------------------------------------------------------------------ */
@@ -185,6 +195,24 @@ ts_diff_sec(const struct timespec *start, const struct timespec *end)
 {
 	return (double)(end->tv_sec - start->tv_sec)
 	     + (double)(end->tv_nsec - start->tv_nsec) / 1e9;
+}
+
+static void
+format_eta(const struct timespec *start, int done, int total,
+	   char *buf, size_t sz)
+{
+	if (done <= 0) {
+		buf[0] = '\0';
+		return;
+	}
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &now);
+	double elapsed = ts_diff_sec(start, &now);
+	double remaining = (elapsed / done) * (total - done);
+	char e[32], r[32];
+	format_time(elapsed, e, sizeof(e));
+	format_time(remaining, r, sizeof(r));
+	snprintf(buf, sz, " [%s elapsed, ~%s remaining]", e, r);
 }
 
 /* ------------------------------------------------------------------ */
@@ -308,6 +336,16 @@ get_available_ram(void)
 	return kb * 1024;
 }
 
+static void
+drop_caches(void)
+{
+	FILE *f = fopen("/proc/sys/vm/drop_caches", "w");
+	if (!f)
+		return;
+	fprintf(f, "3\n");
+	fclose(f);
+}
+
 /* ------------------------------------------------------------------ */
 /* External command execution (fork/exec, no shell)                   */
 /* ------------------------------------------------------------------ */
@@ -334,6 +372,7 @@ run_cmd(const char *prog, ...)
 			int dn = open("/dev/null", O_WRONLY);
 			if (dn >= 0) {
 				dup2(dn, STDOUT_FILENO);
+				dup2(dn, STDERR_FILENO);
 				close(dn);
 			}
 		}
@@ -615,6 +654,43 @@ get_partition_names(const char *disk, char *p1, char *p2, size_t sz)
 	}
 }
 
+static const char *
+read_disk_model(const char *device)
+{
+	static char model[256];
+	const char *base = dev_basename(device);
+	char path[PATH_MAX];
+	snprintf(path, sizeof(path), "/sys/block/%s/device/model", base);
+	FILE *f = fopen(path, "r");
+	if (!f) {
+		snprintf(path, sizeof(path),
+			 "/sys/block/%s/device/device/model", base);
+		f = fopen(path, "r");
+	}
+	if (!f)
+		return NULL;
+	if (!fgets(model, sizeof(model), f)) {
+		fclose(f);
+		return NULL;
+	}
+	fclose(f);
+	size_t len = strlen(model);
+	while (len > 0 && isspace((unsigned char)model[len - 1]))
+		model[--len] = '\0';
+	return len > 0 ? model : NULL;
+}
+
+static void
+print_disk_info(const char *device)
+{
+	unsigned long long size = get_disk_size(device);
+	const char *model = read_disk_model(device);
+	if (model)
+		msg("Disk: %s (%s, %s)\n", device, model, bytes_human(size));
+	else
+		msg("Disk: %s (%s)\n", device, bytes_human(size));
+}
+
 /* ------------------------------------------------------------------ */
 /* Archive operations                                                 */
 /* ------------------------------------------------------------------ */
@@ -716,6 +792,7 @@ run_single_test(const char *device, const char *location,
 		unsigned long long data_size,
 		struct result *out)
 {
+	drop_caches();
 	if (run_cmd("mkfs.btrfs", "-f", device, NULL) != 0) {
 		msg("warning: mkfs.btrfs failed for %s on %s\n", target, device);
 		return -1;
@@ -886,6 +963,9 @@ run_all_tests(const struct config *cfg)
 
 	int total = total_test_count(cfg);
 	int test_num = 0;
+	int tests_done = 0;
+	struct timespec overall_start;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &overall_start);
 	g_nresults = 0;
 
 	for (int loc = 0; loc < nlocations; loc++) {
@@ -904,19 +984,25 @@ run_all_tests(const struct config *cfg)
 					if (g_signaled)
 						return;
 					test_num++;
-					status("Test %d/%d: %s %s at %s (repeat %d/%d)\n",
+					char eta_buf[128];
+					format_eta(&overall_start, tests_done,
+						   total, eta_buf,
+						   sizeof(eta_buf));
+					status("Test %d/%d: %s %s at %s (repeat %d/%d)%s\n",
 					       test_num, total, target,
 					       v ? "force" : "standard",
 					       locations[loc],
-					       r + 1, cfg->repeat);
+					       r + 1, cfg->repeat,
+					       eta_buf);
 					struct result *res = &g_results[g_nresults];
 					if (run_single_test(devices[loc],
 							    locations[loc],
 							    target, v,
 							    g_st.data_size,
-							    res) == 0)
+							    res) == 0) {
 						g_nresults++;
-					else
+						tests_done++;
+					} else
 						test_num--;
 					if (g_nresults >= MAX_RESULTS)
 						return;
@@ -936,19 +1022,25 @@ run_all_tests(const struct config *cfg)
 					if (g_signaled)
 						return;
 					test_num++;
-					status("Test %d/%d: lzo %s at %s (repeat %d/%d)\n",
+					char eta_buf[128];
+					format_eta(&overall_start, tests_done,
+						   total, eta_buf,
+						   sizeof(eta_buf));
+					status("Test %d/%d: lzo %s at %s (repeat %d/%d)%s\n",
 					       test_num, total,
 					       v ? "force" : "standard",
 					       locations[loc],
-					       r + 1, cfg->repeat);
+					       r + 1, cfg->repeat,
+					       eta_buf);
 					struct result *res = &g_results[g_nresults];
 					if (run_single_test(devices[loc],
 							    locations[loc],
 							    "lzo", v,
 							    g_st.data_size,
-							    res) == 0)
+							    res) == 0) {
 						g_nresults++;
-					else
+						tests_done++;
+					} else
 						test_num--;
 					if (g_nresults >= MAX_RESULTS)
 						return;
@@ -960,17 +1052,21 @@ run_all_tests(const struct config *cfg)
 			if (g_signaled)
 				return;
 			test_num++;
-			status("Test %d/%d: none at %s (repeat %d/%d)\n",
+			char eta_buf[128];
+			format_eta(&overall_start, tests_done, total,
+				   eta_buf, sizeof(eta_buf));
+			status("Test %d/%d: none at %s (repeat %d/%d)%s\n",
 			       test_num, total, locations[loc],
-			       r + 1, cfg->repeat);
+			       r + 1, cfg->repeat, eta_buf);
 			struct result *res = &g_results[g_nresults];
 			if (run_single_test(devices[loc],
 					    locations[loc],
 					    "none", 0,
 					    g_st.data_size,
-					    res) == 0)
+					    res) == 0) {
 				g_nresults++;
-			else
+				tests_done++;
+			} else
 				test_num--;
 			if (g_nresults >= MAX_RESULTS)
 				return;
@@ -1574,6 +1670,8 @@ main(int argc, char **argv)
 		return 0;
 	}
 
+	print_disk_info(g_cfg.device);
+
 	snprintf(g_st.tmpdir, sizeof(g_st.tmpdir),
 		 "/tmp/compbench.%d", getpid());
 	if (mkdir(g_st.tmpdir, 0700) < 0)
@@ -1707,6 +1805,27 @@ main(int argc, char **argv)
 	print_interpolated(avgs, navg);
 	print_best(avgs, navg);
 	print_comparison(avgs, navg);
+
+	{
+		int zstd_count = 0;
+		double first_ratio = -1;
+		int all_same = 1;
+		for (int i = 0; i < navg; i++) {
+			if (strncmp(avgs[i].target, "zstd:", 5) == 0) {
+				zstd_count++;
+				if (first_ratio < 0)
+					first_ratio = avgs[i].ratio;
+				else if (fabs(avgs[i].ratio - first_ratio) > 0.0001)
+					all_same = 0;
+			}
+		}
+		if (zstd_count > 1 && all_same)
+			msg("\nNote: All zstd levels produced identical "
+			    "compression ratios (%.4f).\n"
+			    "Consider using a more diverse dataset to "
+			    "differentiate levels.\n", first_ratio);
+	}
+
 	export_csv(avgs, navg);
 
 	cleanup();

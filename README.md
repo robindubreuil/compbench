@@ -13,7 +13,6 @@ Compbench is a C tool that benchmarks Btrfs compression algorithms (zstd, lzo) b
 - **Force mode comparison** — run standard `compress` and/or `compress-force` mount options, with a side-by-side percentage comparison table
 - **HDD zone testing** — benchmark first/last N% of disk to evaluate spatial performance variations, with interpolated results
 - **Repeatable** — average results over multiple runs for reliability
-- **Sync and non-sync metrics** — both are measured automatically (no flag needed)
 - **Disk-level I/O stats** — actual bytes written to physical media, separate from apparent throughput
 - **CSV export** — machine-readable output with full metadata
 

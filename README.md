@@ -4,7 +4,7 @@
 
 # An exhaustive benchmark for Btrfs transparent compression
 
-Compbench is a C tool that benchmarks Btrfs compression algorithms (zstd, lzo) by measuring write throughput, compression ratio, CPU usage, and disk I/O — all through direct kernel interfaces with zero text parsing of external tool output.
+Compbench is a C tool that benchmarks Btrfs compression algorithms (zstd, lzo) by measuring read and write throughput, compression ratio, CPU usage, and disk I/O — all through direct kernel interfaces with zero text parsing of external tool output.
 
 ## Features
 

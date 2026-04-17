@@ -60,14 +60,12 @@ struct result {
 	char force_label[16];
 	double elapsed;
 	double elapsed_sync;
-	double rate_mib;
 	double rate_sync_mib;
 	unsigned long long compressed_bytes;
 	double ratio;
 	double cpu_pct;
 	double sec_per_reduction;
 	unsigned long long disk_bytes;
-	double disk_rate_mib;
 	double disk_rate_sync_mib;
 	double read_rate_mib;
 	double read_cpu_pct;
@@ -872,14 +870,12 @@ run_single_test(const char *device, const char *location,
 		sizeof(out->force_label) - 1);
 	out->elapsed         = elapsed;
 	out->elapsed_sync    = elapsed_sync;
-	out->rate_mib        = elapsed > 0      ? (double)data_size / elapsed      / (1024.0 * 1024.0) : 0;
 	out->rate_sync_mib   = elapsed_sync > 0 ? (double)data_size / elapsed_sync / (1024.0 * 1024.0) : 0;
 	out->compressed_bytes = compressed_bytes;
 	out->ratio           = ratio;
 	out->cpu_pct         = cpu_pct(cpu_before, cpu_after);
 	out->sec_per_reduction = sec_red;
 	out->disk_bytes      = disk_bytes;
-	out->disk_rate_mib   = elapsed > 0      ? (double)disk_bytes / elapsed      / (1024.0 * 1024.0) : 0;
 	out->disk_rate_sync_mib = elapsed_sync > 0 ? (double)disk_bytes / elapsed_sync / (1024.0 * 1024.0) : 0;
 
 	umount(g_st.mnt);
@@ -1092,9 +1088,7 @@ struct avg {
 	char location[16];
 	char target[32];
 	char force_label[16];
-	double rate_mib;
 	double rate_sync_mib;
-	double disk_rate_mib;
 	double disk_rate_sync_mib;
 	double ratio;
 	double cpu_pct;
@@ -1129,8 +1123,8 @@ compute_averages(struct avg *avgs, int max_avgs)
 		a->force_label[sizeof(a->force_label) - 1] = '\0';
 
 		int count = 0;
-		double sum_rate = 0, sum_rate_sync = 0;
-		double sum_disk_rate = 0, sum_disk_rate_sync = 0;
+		double sum_rate_sync = 0;
+		double sum_disk_rate_sync = 0;
 		double sum_ratio = 0, sum_cpu = 0, sum_sec_red = 0;
 		double sum_read_rate = 0, sum_read_cpu = 0, sum_read_disk_rate = 0;
 		unsigned long long sum_read_disk = 0;
@@ -1145,9 +1139,7 @@ compute_averages(struct avg *avgs, int max_avgs)
 				continue;
 			processed[j] = 1;
 			count++;
-			sum_rate	 += g_results[j].rate_mib;
 			sum_rate_sync	 += g_results[j].rate_sync_mib;
-			sum_disk_rate	 += g_results[j].disk_rate_mib;
 			sum_disk_rate_sync += g_results[j].disk_rate_sync_mib;
 			sum_ratio	 += g_results[j].ratio;
 			sum_cpu		 += g_results[j].cpu_pct;
@@ -1164,9 +1156,7 @@ compute_averages(struct avg *avgs, int max_avgs)
 			}
 		}
 
-		a->rate_mib		= sum_rate / count;
 		a->rate_sync_mib	= sum_rate_sync / count;
-		a->disk_rate_mib	= sum_disk_rate / count;
 		a->disk_rate_sync_mib	= sum_disk_rate_sync / count;
 		a->ratio		= sum_ratio / count;
 		a->cpu_pct		= sum_cpu / count;
@@ -1206,50 +1196,48 @@ print_results_table(struct avg *avgs, int navg)
 		return;
 	}
 
-	int wl = 0, wt = 0, wr = 0, wrs = 0, wrr = 0, wdr = 0, wrd = 0, wra = 0, wcp = 0, wrc = 0, wsr = 0, wf = 0, wn = 0;
+	int wl = 0, wt = 0, wws = 0, wrr = 0, wwd = 0, wrd = 0, wra = 0, wwc = 0, wrc = 0, wsr = 0, wf = 0, wn = 0;
 
 	for (int i = 0; i < navg; i++) {
 		char tmp[64];
 		int v;
-		v = col_width("Location", avgs[i].location);   if (v > wl)  wl  = v;
-		v = col_width("Target", avgs[i].target);        if (v > wt)  wt  = v;
-		snprintf(tmp, sizeof(tmp), "%.1f", avgs[i].rate_mib);
-		v = col_width("MiB/s", tmp);                    if (v > wr)  wr  = v;
+		v = col_width("Location", avgs[i].location);	if (v > wl)  wl  = v;
+		v = col_width("Target", avgs[i].target);	if (v > wt)  wt  = v;
 		snprintf(tmp, sizeof(tmp), "%.1f", avgs[i].rate_sync_mib);
-		v = col_width("Sync", tmp);                     if (v > wrs) wrs = v;
+		v = col_width("WrMiB/s", tmp);			if (v > wws) wws = v;
 		snprintf(tmp, sizeof(tmp), "%.1f", avgs[i].read_rate_mib);
-		v = col_width("Read", tmp);                     if (v > wrr) wrr = v;
+		v = col_width("RdMiB/s", tmp);			if (v > wrr) wrr = v;
 		snprintf(tmp, sizeof(tmp), "%.1f", avgs[i].disk_rate_sync_mib);
-		v = col_width("Disk*", tmp);                    if (v > wdr) wdr = v;
+		v = col_width("WrDisk*", tmp);			if (v > wwd) wwd = v;
 		snprintf(tmp, sizeof(tmp), "%.1f", avgs[i].read_disk_rate_mib);
-		v = col_width("RdDisk*", tmp);                  if (v > wrd) wrd = v;
+		v = col_width("RdDisk*", tmp);			if (v > wrd) wrd = v;
 		snprintf(tmp, sizeof(tmp), "%.4f", avgs[i].ratio);
-		v = col_width("Ratio", tmp);                    if (v > wra) wra = v;
+		v = col_width("Ratio", tmp);			if (v > wra) wra = v;
 		snprintf(tmp, sizeof(tmp), "%.1f", avgs[i].cpu_pct);
-		v = col_width("CPU%", tmp);                     if (v > wcp) wcp = v;
+		v = col_width("WrCPU%", tmp);			if (v > wwc) wwc = v;
 		snprintf(tmp, sizeof(tmp), "%.1f", avgs[i].read_cpu_pct);
-		v = col_width("RdCPU%", tmp);                   if (v > wrc) wrc = v;
+		v = col_width("RdCPU%", tmp);			if (v > wrc) wrc = v;
 		if (isfinite(avgs[i].sec_per_reduction))
 			snprintf(tmp, sizeof(tmp), "%.2f", avgs[i].sec_per_reduction);
 		else
 			snprintf(tmp, sizeof(tmp), "inf");
-		v = col_width("Sec/Red", tmp);                  if (v > wsr) wsr = v;
-		v = col_width("Force", avgs[i].force_label);    if (v > wf)  wf  = v;
+		v = col_width("Sec/Red", tmp);			if (v > wsr) wsr = v;
+		v = col_width("Force", avgs[i].force_label);	if (v > wf)  wf  = v;
 		snprintf(tmp, sizeof(tmp), "%d", avgs[i].count);
-		v = col_width("n", tmp);                        if (v > wn)  wn  = v;
+		v = col_width("n", tmp);			if (v > wn)  wn  = v;
 	}
 
 	if (g_cfg.repeat > 1)
 		msg("All results averaged over %d runs.\n\n", g_cfg.repeat);
 
 	msg("Benchmark Results:\n");
-	msg("%-*s  %-*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %-*s  %*s\n",
+	msg("%-*s  %-*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %-*s  %*s\n",
 	    wl, "Location", wt, "Target",
-	    wr, "MiB/s", wrs, "Sync", wrr, "Read",
-	    wdr, "Disk*", wrd, "RdDisk*", wra, "Ratio",
-	    wcp, "CPU%", wrc, "RdCPU%", wsr, "Sec/Red", wf, "Force", wn, "n");
+	    wws, "WrMiB/s", wrr, "RdMiB/s",
+	    wwd, "WrDisk*", wrd, "RdDisk*", wra, "Ratio",
+	    wwc, "WrCPU%", wrc, "RdCPU%", wsr, "Sec/Red", wf, "Force", wn, "n");
 
-	int sep = wl + 1 + wt + 1 + wr + 1 + wrs + 1 + wrr + 1 + wdr + 1 + wrd + 1 + wra + 1 + wcp + 1 + wrc + 1 + wsr + 1 + wf + 1 + wn;
+	int sep = wl + 1 + wt + 1 + wws + 1 + wrr + 1 + wwd + 1 + wrd + 1 + wra + 1 + wwc + 1 + wrc + 1 + wsr + 1 + wf + 1 + wn;
 	for (int i = 0; i < sep + 9; i++)
 		msg("-");
 	msg("\n");
@@ -1261,29 +1249,28 @@ print_results_table(struct avg *avgs, int navg)
 		else
 			snprintf(sr, sizeof(sr), "inf");
 
-		msg("%-*s  %-*s  %*.1f  %*.1f  %*.1f  %*.1f  %*.1f  %.4f  %*.1f  %*.1f  %*s  %-*s  %d\n",
+		msg("%-*s  %-*s  %*.1f  %*.1f  %*.1f  %*.1f  %.4f  %*.1f  %*.1f  %*s  %-*s  %d\n",
 		    wl, avgs[i].location, wt, avgs[i].target,
-		    wr, avgs[i].rate_mib, wrs, avgs[i].rate_sync_mib,
+		    wws, avgs[i].rate_sync_mib,
 		    wrr, avgs[i].read_rate_mib,
-		    wdr, avgs[i].disk_rate_sync_mib,
+		    wwd, avgs[i].disk_rate_sync_mib,
 		    wrd, avgs[i].read_disk_rate_mib,
-		    avgs[i].ratio, wcp, avgs[i].cpu_pct,
+		    avgs[i].ratio, wwc, avgs[i].cpu_pct,
 		    wrc, avgs[i].read_cpu_pct,
 		    wsr, sr, wf, avgs[i].force_label, wn, avgs[i].count);
 	}
 	msg("\n");
 }
 
-static void
-print_interpolated(struct avg *avgs, int navg)
+static int
+append_interpolated(struct avg *avgs, int navg, int max_avgs)
 {
 	if (g_cfg.hdd_percent <= 0)
-		return;
+		return navg;
 
-	struct avg grouped[MAX_RESULTS];
-	int ngrouped = 0;
+	int added = 0;
 
-	for (int i = 0; i < navg && ngrouped < MAX_RESULTS; i++) {
+	for (int i = 0; i < navg && (navg + added) < max_avgs; i++) {
 		if (strcmp(avgs[i].location, "begin") != 0)
 			continue;
 
@@ -1301,24 +1288,22 @@ print_interpolated(struct avg *avgs, int navg)
 		if (found < 0)
 			continue;
 
-		struct avg *a = &grouped[ngrouped++];
+		struct avg *a = &avgs[navg + added];
 		memset(a, 0, sizeof(*a));
 		strncpy(a->location, "interpolated", sizeof(a->location) - 1);
 		strncpy(a->target, avgs[i].target, sizeof(a->target) - 1);
 		strncpy(a->force_label, avgs[i].force_label, sizeof(a->force_label) - 1);
-		a->rate_mib	   = (avgs[i].rate_mib	   + avgs[found].rate_mib)	  / 2;
-		a->rate_sync_mib   = (avgs[i].rate_sync_mib  + avgs[found].rate_sync_mib) / 2;
-		a->disk_rate_mib   = (avgs[i].disk_rate_mib   + avgs[found].disk_rate_mib) / 2;
-		a->disk_rate_sync_mib = (avgs[i].disk_rate_sync_mib + avgs[found].disk_rate_sync_mib) / 2;
-		a->ratio	   = (avgs[i].ratio	   + avgs[found].ratio)		  / 2;
-		a->cpu_pct	   = (avgs[i].cpu_pct	   + avgs[found].cpu_pct)	  / 2;
-		a->compressed_bytes = (avgs[i].compressed_bytes + avgs[found].compressed_bytes) / 2;
-		a->disk_bytes	   = (avgs[i].disk_bytes	   + avgs[found].disk_bytes)	  / 2;
-		a->elapsed_sync	   = (avgs[i].elapsed_sync	   + avgs[found].elapsed_sync)  / 2;
-		a->read_rate_mib   = (avgs[i].read_rate_mib   + avgs[found].read_rate_mib)  / 2;
-		a->read_cpu_pct    = (avgs[i].read_cpu_pct    + avgs[found].read_cpu_pct)   / 2;
-		a->read_disk_bytes = (avgs[i].read_disk_bytes + avgs[found].read_disk_bytes) / 2;
-		a->read_disk_rate_mib = (avgs[i].read_disk_rate_mib + avgs[found].read_disk_rate_mib) / 2;
+		a->rate_sync_mib      = (avgs[i].rate_sync_mib      + avgs[found].rate_sync_mib)      / 2;
+		a->disk_rate_sync_mib = (avgs[i].disk_rate_sync_mib  + avgs[found].disk_rate_sync_mib) / 2;
+		a->ratio              = (avgs[i].ratio               + avgs[found].ratio)               / 2;
+		a->cpu_pct            = (avgs[i].cpu_pct             + avgs[found].cpu_pct)             / 2;
+		a->compressed_bytes   = (avgs[i].compressed_bytes    + avgs[found].compressed_bytes)    / 2;
+		a->disk_bytes         = (avgs[i].disk_bytes          + avgs[found].disk_bytes)          / 2;
+		a->elapsed_sync       = (avgs[i].elapsed_sync        + avgs[found].elapsed_sync)        / 2;
+		a->read_rate_mib      = (avgs[i].read_rate_mib       + avgs[found].read_rate_mib)       / 2;
+		a->read_cpu_pct       = (avgs[i].read_cpu_pct        + avgs[found].read_cpu_pct)        / 2;
+		a->read_disk_bytes    = (avgs[i].read_disk_bytes     + avgs[found].read_disk_bytes)     / 2;
+		a->read_disk_rate_mib = (avgs[i].read_disk_rate_mib  + avgs[found].read_disk_rate_mib)  / 2;
 		double sr1 = avgs[i].sec_per_reduction;
 		double sr2 = avgs[found].sec_per_reduction;
 		if (isfinite(sr1) && isfinite(sr2))
@@ -1326,11 +1311,26 @@ print_interpolated(struct avg *avgs, int navg)
 		else
 			a->sec_per_reduction = INFINITY;
 		a->count = 0;
+		added++;
 	}
 
-	if (ngrouped > 0) {
+	return navg + added;
+}
+
+static void
+print_interpolated(struct avg *avgs, int navg)
+{
+	if (g_cfg.hdd_percent <= 0)
+		return;
+
+	int ninterp = 0;
+	for (int i = 0; i < navg; i++) {
+		if (strcmp(avgs[i].location, "interpolated") == 0)
+			ninterp++;
+	}
+	if (ninterp > 0) {
 		msg("\nInterpolated Results (average across disk):\n");
-		print_results_table(grouped, ngrouped);
+		print_results_table(avgs + (navg - ninterp), ninterp);
 	}
 }
 
@@ -1373,7 +1373,7 @@ print_best(struct avg *avgs, int navg)
 
 		const char *loc_label = locs[li];
 		msg("  %s:\n", loc_label);
-		msg("    Fastest:         %s (%.1f MiB/s synced, %.1f%% CPU, %s)\n",
+		msg("    Fastest write:   %s (%.1f MiB/s, %.1f%% CPU, %s)\n",
 		    subset[fi].target, subset[fi].rate_sync_mib,
 		    subset[fi].cpu_pct, subset[fi].force_label);
 		msg("    Fastest read:    %s (%.1f MiB/s, %.1f%% CPU, %s)\n",
@@ -1401,9 +1401,9 @@ print_comparison(struct avg *avgs, int navg)
 		return;
 
 	msg("\nForce vs Standard Comparison (percentage differences):\n");
-	msg("%-10s %-10s %10s %10s %10s %10s %10s %10s %10s\n",
-	    "Location", "Target", "Time%", "Rate%", "RdRate%",
-	    "Compr%", "Ratio%", "CPU%", "RdCPU%");
+	msg("%-10s %-10s %10s %10s %10s %10s %10s %10s\n",
+	    "Location", "Target", "Time%", "WrRate%", "RdRate%",
+	    "Compr%", "Ratio%", "WrCPU%", "RdCPU%");
 	msg("----------------------------------------------------------------------------------------------------------\n");
 
 	for (int i = 0; i < navg; i++) {
@@ -1479,8 +1479,8 @@ export_csv(struct avg *avgs, int navg)
 		return;
 	}
 
-	fprintf(f, "Location,Target,MiB/s,Sync_MiB/s,Read_MiB/s,Disk_MiB/s,Disk_Sync_MiB/s,"
-		   "RdDisk_MiB/s,Compressed,Ratio,CPU%%,RdCPU%%,Sec/Red,Force,n\n");
+	fprintf(f, "Location,Target,WrMiB/s,RdMiB/s,WrDisk_MiB/s,"
+		   "RdDisk_MiB/s,Compressed,Ratio,WrCPU%%,RdCPU%%,Sec/Red,Force,n\n");
 
 	for (int i = 0; i < navg; i++) {
 		char sr[32];
@@ -1488,11 +1488,11 @@ export_csv(struct avg *avgs, int navg)
 			snprintf(sr, sizeof(sr), "%.4f", avgs[i].sec_per_reduction);
 		else
 			snprintf(sr, sizeof(sr), "inf");
-		fprintf(f, "%s,%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%llu,%.4f,%.1f,%.1f,%s,%s,%d\n",
+		fprintf(f, "%s,%s,%.1f,%.1f,%.1f,%.1f,%llu,%.4f,%.1f,%.1f,%s,%s,%d\n",
 			avgs[i].location, avgs[i].target,
-			avgs[i].rate_mib, avgs[i].rate_sync_mib,
+			avgs[i].rate_sync_mib,
 			avgs[i].read_rate_mib,
-			avgs[i].disk_rate_mib, avgs[i].disk_rate_sync_mib,
+			avgs[i].disk_rate_sync_mib,
 			avgs[i].read_disk_rate_mib,
 			avgs[i].compressed_bytes, avgs[i].ratio,
 			avgs[i].cpu_pct, avgs[i].read_cpu_pct,
@@ -1567,15 +1567,14 @@ usage(FILE *out)
 "  -V, --version           Show version\n"
 "\n"
 "Measured metrics (all via kernel interfaces, zero text parsing):\n"
-"  MiB/s   Apparent write throughput (copy_file_range)\n"
-"  Sync    Write throughput including filesystem sync\n"
-"  Read    Read throughput after cache clear (unmount/remount + read)\n"
-"  Disk*   Actual bytes written to physical media (/sys/block)\n"
-"  RdDisk* Actual bytes read from physical media (/sys/block)\n"
-"  Ratio   Space consumed vs uncompressed data (statvfs)\n"
-"  CPU%%    System CPU usage during write (/proc/stat)\n"
-"  RdCPU%%  System CPU usage during read (/proc/stat)\n"
-"  Sec/Red Seconds per 1%% space reduction (speed/compression balance)\n");
+"  WrMiB/s  Synced write throughput (copy_file_range + sync)\n"
+"  RdMiB/s  Read throughput after cache clear (unmount/remount + read)\n"
+"  WrDisk*  Actual bytes written to physical media (/sys/block)\n"
+"  RdDisk*  Actual bytes read from physical media (/sys/block)\n"
+"  Ratio    Space consumed vs uncompressed data (statvfs)\n"
+"  WrCPU%%   System CPU usage during write (/proc/stat)\n"
+"  RdCPU%%   System CPU usage during read (/proc/stat)\n"
+"  Sec/Red  Seconds per 1%% space reduction (speed/compression balance)\n");
 }
 
 /* ------------------------------------------------------------------ */
@@ -1802,6 +1801,7 @@ main(int argc, char **argv)
 	int navg = compute_averages(avgs, MAX_RESULTS);
 
 	print_results_table(avgs, navg);
+	navg = append_interpolated(avgs, navg, MAX_RESULTS);
 	print_interpolated(avgs, navg);
 	print_best(avgs, navg);
 	print_comparison(avgs, navg);

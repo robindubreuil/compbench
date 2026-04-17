@@ -126,9 +126,9 @@ assert_output "help mentions --zstd" "${TESTDIR}/help.log" "--zstd"
 assert_output "help mentions --force" "${TESTDIR}/help.log" "--force"
 assert_output "help mentions --hdd" "${TESTDIR}/help.log" "--hdd"
 assert_output "help mentions --repeat" "${TESTDIR}/help.log" "--repeat"
-assert_output "help mentions MiB/s" "${TESTDIR}/help.log" "MiB/s"
+assert_output "help mentions WrMiB/s" "${TESTDIR}/help.log" "WrMiB/s"
 assert_output "help mentions kernel interfaces" "${TESTDIR}/help.log" "kernel interface"
-assert_output "help mentions Read throughput" "${TESTDIR}/help.log" "Read throughput"
+assert_output "help mentions RdMiB/s throughput" "${TESTDIR}/help.log" "RdMiB/s"
 assert_output "help mentions RdDisk" "${TESTDIR}/help.log" "RdDisk"
 assert_output "help mentions RdCPU" "${TESTDIR}/help.log" "RdCPU"
 
@@ -201,7 +201,7 @@ assert_output "results table present" "${TESTDIR}/test5.log" "Benchmark Results"
 assert_output "zstd:1 result" "${TESTDIR}/test5.log" "zstd:1"
 assert_output "lzo result" "${TESTDIR}/test5.log" "lzo"
 assert_output "none result" "${TESTDIR}/test5.log" "none"
-assert_output "read column in table" "${TESTDIR}/test5.log" "Read"
+assert_output "read column in table" "${TESTDIR}/test5.log" "RdMiB/s"
 assert_output "RdDisk column header" "${TESTDIR}/test5.log" "RdDisk"
 assert_output "RdCPU% column header" "${TESTDIR}/test5.log" "RdCPU"
 assert_output "dataset size reported" "${TESTDIR}/test5.log" "Dataset size:"
@@ -221,7 +221,8 @@ assert_output "CSV has zstd:1" "$CSVPATH" "zstd:1"
 assert_output "CSV has lzo" "$CSVPATH" "lzo"
 assert_output "CSV has none" "$CSVPATH" "none"
 assert_output "CSV has header" "$CSVPATH" "Location,Target"
-assert_output "CSV has read column" "$CSVPATH" "Read_MiB/s"
+assert_output "CSV has write column" "$CSVPATH" "WrMiB/s"
+assert_output "CSV has read column" "$CSVPATH" "RdMiB/s"
 assert_output "CSV has read disk column" "$CSVPATH" "RdDisk_MiB/s"
 assert_output "CSV has read CPU column" "$CSVPATH" "RdCPU%"
 assert_output "CSV has metadata" "$CSVPATH" "# compbench"
@@ -233,10 +234,10 @@ assert_output "CSV has force mode" "$CSVPATH" "# Force:"
 
 CSV_DATA_LINE=$(grep -v "^#" "$CSVPATH" | grep -v "^Location" | grep -v "^$" | head -1)
 CSV_COMMA_COUNT=$(echo "$CSV_DATA_LINE" | tr -cd ',' | wc -c)
-if [ "$CSV_COMMA_COUNT" -eq 14 ]; then
-	pass "CSV data rows have correct column count (15 fields)"
+if [ "$CSV_COMMA_COUNT" -eq 12 ]; then
+	pass "CSV data rows have correct column count (13 fields)"
 else
-	fail "CSV data rows have wrong column count: $CSV_COMMA_COUNT commas (expected 14)"
+	fail "CSV data rows have wrong column count: $CSV_COMMA_COUNT commas (expected 12)"
 fi
 
 # ============================================================
@@ -270,8 +271,9 @@ assert_output "standard variant" "${TESTDIR}/test9.log" "standard"
 assert_output "force variant" "${TESTDIR}/test9.log" "force"
 assert_output "comparison table" "${TESTDIR}/test9.log" "Force vs Standard Comparison"
 assert_output "comparison headers" "${TESTDIR}/test9.log" "Time%"
-assert_output "comparison headers" "${TESTDIR}/test9.log" "Rate%"
+assert_output "comparison headers" "${TESTDIR}/test9.log" "WrRate%"
 assert_output "comparison has read rate" "${TESTDIR}/test9.log" "RdRate%"
+assert_output "comparison has WrCPU header" "${TESTDIR}/test9.log" "WrCPU%"
 assert_output "comparison has RdCPU header" "${TESTDIR}/test9.log" "RdCPU%"
 
 # ============================================================
@@ -307,11 +309,11 @@ assert_output "zstd still present" "${TESTDIR}/test12.log" "zstd:1"
 # Test 13: Best results summary
 # ============================================================
 echo "=== Test 13: Best results summary ==="
-assert_output "Fastest summary" "${TESTDIR}/test5.log" "Fastest:"
+assert_output "Fastest summary" "${TESTDIR}/test5.log" "Fastest write:"
 assert_output "Fastest read summary" "${TESTDIR}/test5.log" "Fastest read:"
 assert_output "Best compressed summary" "${TESTDIR}/test5.log" "Best compressed:"
 assert_output "Best balanced summary" "${TESTDIR}/test5.log" "Best balanced:"
-assert_output "CPU% in best results" "${TESTDIR}/test5.log" "CPU"
+assert_output "CPU% in best results" "${TESTDIR}/test5.log" "WrCPU"
 
 if grep -qE "Fastest read:.*\([0-9]+\.[0-9]+ MiB/s" "${TESTDIR}/test5.log"; then
 	pass "best read has numeric MiB/s value"
@@ -403,6 +405,7 @@ assert_output "HDD end location" "${TESTDIR}/test19.log" "end"
 assert_output "interpolated results" "${TESTDIR}/test19.log" "Interpolated Results"
 assert_output "HDD interpolated data rows" "${TESTDIR}/test19.log" "interpolated  zstd:1"
 assert_output "HDD has RdCPU in results" "${TESTDIR}/test19.log" "RdCPU"
+assert_output "HDD best results has interpolated" "${TESTDIR}/test19.log" "interpolated:"
 
 if [ -n "$LOOP2" ]; then
 	losetup -d "$LOOP2" 2>/dev/null || true
@@ -466,10 +469,10 @@ assert_not_output "no force variant with -f none" "${TESTDIR}/test23.log" " forc
 echo "=== Test 24: CSV read metric values ==="
 CSV_DATA=$(grep "zstd:1" "${TESTDIR}/results.csv" | head -1)
 if [ -n "$CSV_DATA" ]; then
-	READ_COL=$(echo "$CSV_DATA" | cut -d',' -f5)
-	RDDISK_COL=$(echo "$CSV_DATA" | cut -d',' -f8)
-	RDCPU_COL=$(echo "$CSV_DATA" | cut -d',' -f12)
-	if [ "$READ_COL" != "Read_MiB/s" ] && [ -n "$READ_COL" ]; then
+	READ_COL=$(echo "$CSV_DATA" | cut -d',' -f4)
+	RDDISK_COL=$(echo "$CSV_DATA" | cut -d',' -f6)
+	RDCPU_COL=$(echo "$CSV_DATA" | cut -d',' -f10)
+	if [ "$READ_COL" != "RdMiB/s" ] && [ -n "$READ_COL" ]; then
 		pass "CSV zstd:1 read rate present ($READ_COL)"
 	else
 		fail "CSV zstd:1 read rate missing or is header"

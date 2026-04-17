@@ -96,13 +96,12 @@ All metrics use kernel interfaces directly:
 
 | Column | Description | Source |
 |--------|-------------|--------|
-| MiB/s | Apparent write throughput | `clock_gettime` + `copy_file_range` |
-| Sync | Write throughput including `sync()` | `clock_gettime` |
-| Read | Read throughput after cache clear (unmount/remount + full tree read) | `clock_gettime` |
-| Disk* | Actual bytes written to physical media | `/sys/block/*/stat` |
+| WrMiB/s | Synced write throughput (copy + sync) | `clock_gettime` |
+| RdMiB/s | Read throughput after cache clear (unmount/remount + full tree read) | `clock_gettime` |
+| WrDisk* | Actual bytes written to physical media | `/sys/block/*/stat` |
 | RdDisk* | Actual bytes read from physical media | `/sys/block/*/stat` |
 | Ratio | Space consumed vs uncompressed | `statvfs` |
-| CPU% | System CPU usage during write | `/proc/stat` |
+| WrCPU% | System CPU usage during write | `/proc/stat` |
 | RdCPU% | System CPU usage during read | `/proc/stat` |
 | Sec/Red | Seconds per 1% space reduction | Derived |
 

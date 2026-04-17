@@ -35,7 +35,7 @@
 
 #include <linux/fs.h>
 
-#define VERSION "2.0"
+#define VERSION "2.2"
 #define MAX_RESULTS 4096
 #define BUF_SIZE (1 << 20)
 
@@ -1531,15 +1531,21 @@ parse_force(const char *s)
 static void
 parse_zstd(const char *s, int *min, int *max)
 {
-	const char *dash = strchr(s, '-');
-	if (dash) {
+	const char *sep = NULL;
+	for (const char *p = s + 1; *p; p++) {
+		if (*p == '-' && isdigit(*(p - 1))) {
+			sep = p;
+			break;
+		}
+	}
+	if (sep) {
 		*min = atoi(s);
-		*max = atoi(dash + 1);
+		*max = atoi(sep + 1);
 	} else {
 		*min = *max = atoi(s);
 	}
-	if (*min < 1 || *max > 19 || *min > *max)
-		die("invalid zstd range: %s (1-19)", s);
+	if (*min < -15 || *max > 15 || *min > *max)
+		die("invalid zstd range: %s (-15..15)", s);
 }
 
 static void
@@ -1556,7 +1562,7 @@ usage(FILE *out)
 "\n"
 "Options:\n"
 "  -n, --repeat N          Repeat each test N times (default: 1)\n"
-"      --zstd MIN-MAX      zstd level range (default: 1-15)\n"
+"      --zstd MIN-MAX      zstd level range (-15..15, default: 1-15)\n"
 "  -f, --force MODE        Force mode: none|zstd|lzo|all|both (default: none)\n"
 "      --hdd PERCENT       Test on first/last N%% of disk (1-50)\n"
 "  -o, --output FILE       Export results to CSV\n"

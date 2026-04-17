@@ -1,3 +1,10 @@
+compbench (2.2-1) unstable; urgency=medium
+
+  * Fix zstd level range to match Btrfs: -15..15 (was incorrectly 1-19).
+  * Support negative zstd levels (-15..-1), available since kernel 6.15.
+
+ -- Robin DUBREUIL <63008968+robindubreuil@users.noreply.github.com>  Fri, 17 Apr 2026 12:00:00 +0000
+
 compbench (2.1-1) unstable; urgency=medium
 
   * Multi-architecture CI: build .deb packages for amd64, i386, arm64,

@@ -148,9 +148,9 @@ fi
 # ============================================================
 echo "=== Test 4: Invalid arguments ==="
 assert_exit "no args" 1 "$COMPBENCH"
-assert_exit "invalid zstd range 0-5" 1 "$COMPBENCH" --zstd 0-5 /dev/loop0 foo.tar.xz
+assert_exit "invalid zstd range -16-5" 1 "$COMPBENCH" --zstd -16-5 /dev/loop0 foo.tar.xz
 assert_exit "invalid zstd range 5-3" 1 "$COMPBENCH" --zstd 5-3 /dev/loop0 foo.tar.xz
-assert_exit "invalid zstd range 20-20" 1 "$COMPBENCH" --zstd 20-20 /dev/loop0 foo.tar.xz
+assert_exit "invalid zstd range 16-16" 1 "$COMPBENCH" --zstd 16-16 /dev/loop0 foo.tar.xz
 assert_exit "invalid force mode" 1 "$COMPBENCH" -f invalid /dev/loop0 foo.tar.xz
 assert_exit "repeat 0" 1 "$COMPBENCH" -n 0 /dev/loop0 foo.tar.xz
 assert_exit "hdd 0" 1 "$COMPBENCH" --hdd 0 /dev/loop0 foo.tar.xz

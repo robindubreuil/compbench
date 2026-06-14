@@ -9,12 +9,13 @@ Compbench is a C tool that benchmarks Btrfs compression algorithms (zstd, lzo) b
 ## Features
 
 - **Direct kernel interfaces** — compression ratio via `statvfs()`, CPU via `/proc/stat`, disk I/O via `/sys/block/*/stat`, timing via `clock_gettime(CLOCK_MONOTONIC_RAW)`, data copy via `copy_file_range()`
-- **Exhaustive testing** — configurable zstd level range (-15..15), lzo, and no compression
+- **Exhaustive testing** — configurable zstd level range (-15..15), lzo, zlib, and no compression
+- **Cold-cache reads** — the page cache is dropped before the read test, so `RdMiB/s` reflects real disk throughput, not memory
 - **Force mode comparison** — run standard `compress` and/or `compress-force` mount options, with a side-by-side percentage comparison table
 - **HDD zone testing** — benchmark first/last N% of disk to evaluate spatial performance variations, with interpolated results
-- **Repeatable** — average results over multiple runs for reliability
+- **Repeatable** — average results over multiple runs, with throughput standard deviation reported in the CSV
 - **Disk-level I/O stats** — actual bytes written to physical media, separate from apparent throughput
-- **CSV export** — machine-readable output with full metadata
+- **CSV export** — machine-readable output with full metadata (archive, dataset, host, kernel, date)
 
 ## Requirements
 
@@ -33,6 +34,7 @@ make
 sudo make install
 ```
 
+This installs the `compbench` binary and its man page (`compbench(1)`).
 The binary is dynamically linked against `libm` and `libc` only.
 
 ## Usage
@@ -96,7 +98,7 @@ All metrics use kernel interfaces directly:
 | Column | Description | Source |
 |--------|-------------|--------|
 | WrMiB/s | Synced write throughput (copy + sync) | `clock_gettime` |
-| RdMiB/s | Read throughput after cache clear (unmount/remount + full tree read) | `clock_gettime` |
+| RdMiB/s | Read throughput after cache clear (page cache dropped + remount + full tree read) | `clock_gettime` |
 | WrDisk* | Actual bytes written to physical media | `/sys/block/*/stat` |
 | RdDisk* | Actual bytes read from physical media | `/sys/block/*/stat` |
 | Ratio | Space consumed vs uncompressed | `statvfs` |

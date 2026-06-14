@@ -1,3 +1,23 @@
+compbench (2.3-1) unstable; urgency=medium
+
+  * Fix read benchmark measuring cached data instead of disk: drop
+    page cache before the cold read test.
+  * Add zlib compression algorithm alongside zstd and lzo.
+  * Report write/read throughput standard deviation in CSV (WrStddev,
+    RdStddev) for repeated runs.
+  * Harden integer parsing (--repeat, --hdd, --zstd) with strtol
+    validation instead of atoi.
+  * Fix ETA accuracy by counting every attempted test as progress.
+  * Add manual page (compbench.1).
+  * Add "make uninstall" target.
+  * CSV metadata: human-readable force mode, renamed duplicate
+    "Archive" label, add Host/Kernel/Date for reproducibility.
+  * Refactor test loop to eliminate duplication; unify disk-stat
+    readers; poll for partition nodes instead of a fixed sleep.
+  * Move large result arrays off the stack.
+
+ -- Robin DUBREUIL <robin@dubreuil.pro>  Sun, 14 Jun 2026 12:00:00 +0000
+
 compbench (2.2-1) unstable; urgency=medium
 
   * Fix zstd level range to match Btrfs: -15..15 (was incorrectly 1-19).

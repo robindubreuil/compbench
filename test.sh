@@ -200,6 +200,7 @@ printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -v "$LOOP" "$ARCHIVE" 2>&1 | te
 assert_output "results table present" "${TESTDIR}/test5.log" "Benchmark Results"
 assert_output "zstd:1 result" "${TESTDIR}/test5.log" "zstd:1"
 assert_output "lzo result" "${TESTDIR}/test5.log" "lzo"
+assert_output "zlib result" "${TESTDIR}/test5.log" "zlib"
 assert_output "none result" "${TESTDIR}/test5.log" "none"
 assert_output "read column in table" "${TESTDIR}/test5.log" "RdMiB/s"
 assert_output "RdDisk column header" "${TESTDIR}/test5.log" "RdDisk"
@@ -219,6 +220,7 @@ printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -o "$CSVPATH" "$LOOP" "$ARCHIVE
 [ -f "$CSVPATH" ] && pass "CSV file created" || fail "CSV file not created"
 assert_output "CSV has zstd:1" "$CSVPATH" "zstd:1"
 assert_output "CSV has lzo" "$CSVPATH" "lzo"
+assert_output "CSV has zlib" "$CSVPATH" "zlib"
 assert_output "CSV has none" "$CSVPATH" "none"
 assert_output "CSV has header" "$CSVPATH" "Location,Target"
 assert_output "CSV has write column" "$CSVPATH" "WrMiB/s"
@@ -234,10 +236,10 @@ assert_output "CSV has force mode" "$CSVPATH" "# Force:"
 
 CSV_DATA_LINE=$(grep -v "^#" "$CSVPATH" | grep -v "^Location" | grep -v "^$" | head -1)
 CSV_COMMA_COUNT=$(echo "$CSV_DATA_LINE" | tr -cd ',' | wc -c)
-if [ "$CSV_COMMA_COUNT" -eq 12 ]; then
-	pass "CSV data rows have correct column count (13 fields)"
+if [ "$CSV_COMMA_COUNT" -eq 14 ]; then
+	pass "CSV data rows have correct column count (15 fields)"
 else
-	fail "CSV data rows have wrong column count: $CSV_COMMA_COUNT commas (expected 12)"
+	fail "CSV data rows have wrong column count: $CSV_COMMA_COUNT commas (expected 14)"
 fi
 
 # ============================================================
@@ -250,6 +252,7 @@ printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-3 "$LOOP" "$ARCHIVE" 2>&1 | tee "
 for lvl in 1 2 3; do
 	assert_output "zstd:${lvl} present" "${TESTDIR}/test7.log" "zstd:${lvl}"
 done
+assert_output "zlib present" "${TESTDIR}/test7.log" "zlib"
 
 # ============================================================
 # Test 8: Repeat (n=2)
@@ -418,10 +421,10 @@ echo "=== Test 20: Test count accuracy ==="
 printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-3 "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test20.log" ||
 	fail "test count benchmark failed"
 
-if grep -q "5 tests" "${TESTDIR}/test20.log"; then
-	pass "correct test count (5 = 3 zstd + 1 lzo + 1 none)"
+if grep -q "6 tests" "${TESTDIR}/test20.log"; then
+	pass "correct test count (6 = 3 zstd + lzo + zlib + none)"
 else
-	fail "incorrect test count — expected '5 tests'"
+	fail "incorrect test count — expected '6 tests'"
 fi
 
 # ============================================================

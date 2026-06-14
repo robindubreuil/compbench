@@ -1,0 +1,182 @@
+.TH compbench 1 "June 2026" "compbench 2.3" "User Commands"
+.SH NAME
+compbench \- benchmark Btrfs transparent compression
+.SH SYNOPSIS
+.B compbench
+[\fIOPTIONS\fR] \fIDEVICE\fR \fIARCHIVE\fR
+.SH DESCRIPTION
+.B compbench
+benchmarks Btrfs compression algorithms (zstd, lzo, zlib) and no
+compression by measuring write throughput, read throughput, compression
+ratio, CPU usage, and physical disk I/O.
+.PP
+All metrics are gathered through direct kernel interfaces with no text
+parsing of external tool output:
+.IP \(bu 2
+write/read timing via
+.BR clock_gettime (2)
+.RI ( CLOCK_MONOTONIC_RAW );
+.IP \(bu 2
+compression ratio via
+.BR statvfs (2);
+.IP \(bu 2
+CPU usage via
+.IR /proc/stat ;
+.IP \(bu 2
+physical disk I/O via
+.IR /sys/block/*/stat ;
+.IP \(bu 2
+data copy via
+.BR copy_file_range (2).
+.PP
+.SH WARNING
+.B This tool erases all data on DEVICE.
+It creates a fresh Btrfs filesystem on each test run. Double-check the
+device path before proceeding.
+.SH ARGUMENTS
+.TP
+.B DEVICE
+Block device to test (e.g.
+.IR /dev/sdX ).
+.TP
+.B ARCHIVE
+Local path or URL to a
+.I .tar.xz
+archive used as the test dataset.
+.SH OPTIONS
+.TP
+.BR \-n ", " \-\-repeat = N
+Repeat each test
+.I N
+times and average the results (default: 1). When
+.I N
+> 1, the standard deviation of the write and read throughput is also
+reported in the CSV output.
+.TP
+.BR \-\-zstd = MIN\-MAX
+zstd compression level range
+.RI ( \-15..15 ,
+default:
+.IR 1\-15 ).
+Negative levels are available since kernel 6.15. A single level may be
+given instead of a range (e.g.
+.IR \-\-zstd\ 5 ).
+.TP
+.BR \-f ", " \-\-force = MODE
+Force mode controls
+.B compress-force
+versus standard
+.B compress
+mount behaviour. One of:
+.RS
+.TP 12
+.B none
+standard
+.B compress=
+for all tests (default);
+.TP
+.B zstd
+.B compress-force=
+for zstd, standard for others;
+.TP
+.B lzo
+.B compress-force=
+for lzo, standard for others;
+.TP
+.B all
+.B compress-force=
+for all algorithms;
+.TP
+.B both
+run each test twice (standard and force) and print a side-by-side
+comparison table.
+.RE
+.TP
+.BR \-\-hdd = PERCENT
+Partition the device and test on the first and last
+.I PERCENT
+of the disk (1\-50), to evaluate spatial performance variation (typical
+for spinning disks). An interpolated average across both zones is also
+reported.
+.TP
+.BR \-o ", " \-\-output = FILE
+Export results to
+.I FILE
+in CSV format with full run metadata.
+.TP
+.B \-\-no-integrity-check
+Skip the
+.B xz
+archive integrity check.
+.TP
+.BR \-v ", " \-\-verbose
+Verbose output.
+.TP
+.BR \-h ", " \-\-help
+Show help and exit.
+.TP
+.BR \-V ", " \-\-version
+Show version and exit.
+.SH OUTPUT
+The results table reports, per target:
+.TP 12
+.B WrMiB/s
+synced write throughput (copy + sync);
+.TP
+.B RdMiB/s
+read throughput after a page-cache clear (cold read);
+.TP
+.B WrDisk*
+actual bytes written to physical media;
+.TP
+.B RdDisk*
+actual bytes read from physical media;
+.TP
+.B Ratio
+space consumed divided by uncompressed data size;
+.TP
+.B WrCPU% \ / \ RdCPU%
+system CPU usage during write/read;
+.TP
+.B Sec/Red
+seconds per 1% space reduction (speed/compression balance; lower is
+better).
+.PP
+A
+.I "Best Results"
+summary highlights the fastest write, fastest read, best compressed, and
+best balanced target per disk zone.
+.SH EXIT STATUS
+.TP
+.B 0
+success;
+.TP
+.B 1
+error (invalid arguments, missing privileges, failed operation, or user
+abort).
+.SH EXAMPLES
+.TP
+Basic run:
+.B compbench /dev/sdX https://example.com/archive.tar.xz
+.TP
+Repeated, zstd 1\-10, both force modes, HDD zones:
+.B compbench /dev/sdX archive.tar.xz \-n 3 \-\-zstd 1\-10 \-f both \-\-hdd 10 \-v
+.SH REQUIREMENTS
+Must be run as root. Requires
+.BR btrfs-progs ,
+.BR xz-utils ,
+.BR gdisk ,
+and
+.B curl
+(on PATH) when fetching a remote archive.
+.SH FILES
+CSV output is written to the path given by
+.BR \-\-output .
+.SH SEE ALSO
+.BR mkfs.btrfs (8),
+.BR mount (8),
+.BR btrfs (5)
+.SH AUTHOR
+Robin Dubreuil
+.SH LICENSE
+GPL-3.0-or-later

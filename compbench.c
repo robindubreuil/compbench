@@ -27,6 +27,7 @@
 #include <sys/statvfs.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
 #include <dirent.h>
@@ -35,7 +36,7 @@
 
 #include <linux/fs.h>
 
-#define VERSION "2.2"
+#define VERSION "2.3"
 #define MAX_RESULTS 4096
 #define BUF_SIZE (1 << 20)
 
@@ -261,34 +262,14 @@ dev_basename(const char *dev)
 	return p ? p + 1 : dev;
 }
 
-static unsigned long long
-read_sectors_written(const char *dev)
-{
-	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "/sys/class/block/%s/stat", dev_basename(dev));
-	FILE *f = fopen(path, "r");
-	if (!f)
-		return 0;
-	char line[512];
-	if (!fgets(line, sizeof(line), f)) {
-		fclose(f);
-		return 0;
-	}
-	fclose(f);
-	char *p = line;
-	while (*p && isspace((unsigned char)*p))
-		p++;
-	for (int field = 1; field < 7; field++) {
-		while (*p && !isspace((unsigned char)*p))
-			p++;
-		while (*p && isspace((unsigned char)*p))
-			p++;
-	}
-	return strtoull(p, NULL, 10);
-}
+/* diskstats field indices (1-based), see Documentation/admin-stat/iostats.rst */
+enum {
+	STAT_SECTORS_READ    = 3,
+	STAT_SECTORS_WRITTEN = 7,
+};
 
 static unsigned long long
-read_sectors_read(const char *dev)
+read_disk_field(const char *dev, int field)
 {
 	char path[PATH_MAX];
 	snprintf(path, sizeof(path), "/sys/class/block/%s/stat",
@@ -305,7 +286,7 @@ read_sectors_read(const char *dev)
 	char *p = line;
 	while (*p && isspace((unsigned char)*p))
 		p++;
-	for (int field = 1; field < 3; field++) {
+	for (int i = 1; i < field; i++) {
 		while (*p && !isspace((unsigned char)*p))
 			p++;
 		while (*p && isspace((unsigned char)*p))
@@ -545,8 +526,14 @@ read_tree(const char *path)
 			int fd = open(fp, O_RDONLY);
 			if (fd < 0)
 				continue;
-			while (read(fd, buf, sizeof(buf)) > 0)
-				;
+			ssize_t n;
+			while ((n = read(fd, buf, sizeof(buf))) != 0) {
+				if (n < 0) {
+					if (errno == EINTR)
+						continue;
+					break;
+				}
+			}
 			close(fd);
 		}
 		if (rc < 0) {
@@ -652,6 +639,18 @@ get_partition_names(const char *disk, char *p1, char *p2, size_t sz)
 	}
 }
 
+static int
+wait_for_block_dev(const char *path, int timeout_ms)
+{
+	for (int ms = 0; ms <= timeout_ms; ms += 100) {
+		struct stat st;
+		if (stat(path, &st) == 0 && S_ISBLK(st.st_mode))
+			return 0;
+		usleep(100000);
+	}
+	return -1;
+}
+
 static const char *
 read_disk_model(const char *device)
 {
@@ -742,6 +741,19 @@ get_archive_size(const char *path)
 /* Force variant logic                                                */
 /* ------------------------------------------------------------------ */
 
+static const char *
+force_mode_name(enum force_mode f)
+{
+	switch (f) {
+	case FORCE_NONE: return "none";
+	case FORCE_ZSTD: return "zstd";
+	case FORCE_LZO:  return "lzo";
+	case FORCE_ALL:  return "all";
+	case FORCE_BOTH: return "both";
+	}
+	return "unknown";
+}
+
 static void
 get_force_variants(const char *algo, enum force_mode force,
 		   int *do_standard, int *do_force)
@@ -824,7 +836,8 @@ run_single_test(const char *device, const char *location,
 	struct statvfs sv_before;
 	statvfs(g_st.mnt, &sv_before);
 	struct cpu_sample cpu_before = read_cpu();
-	unsigned long long disk_sectors_before = read_sectors_written(device);
+	unsigned long long disk_sectors_before = read_disk_field(device,
+								STAT_SECTORS_WRITTEN);
 
 	struct timespec ts_start, ts_copy, ts_sync;
 	clock_gettime(CLOCK_MONOTONIC_RAW, &ts_start);
@@ -845,7 +858,8 @@ run_single_test(const char *device, const char *location,
 	struct statvfs sv_after;
 	statvfs(g_st.mnt, &sv_after);
 	struct cpu_sample cpu_after = read_cpu();
-	unsigned long long disk_sectors_after = read_sectors_written(device);
+	unsigned long long disk_sectors_after = read_disk_field(device,
+								STAT_SECTORS_WRITTEN);
 
 	unsigned long long free_before = sv_before.f_bfree * (unsigned long long)sv_before.f_frsize;
 	unsigned long long free_after  = sv_after.f_bfree  * (unsigned long long)sv_after.f_frsize;
@@ -882,6 +896,12 @@ run_single_test(const char *device, const char *location,
 	g_st.dev_mounted = 0;
 
 	verbose("Unmounted, remounting for read test...\n");
+
+	/* Drop page cache so the read test measures real disk reads,
+	 * not data still cached from the write phase. tmpfs source data
+	 * (shmem) is not evicted by this, so subsequent copies stay fast. */
+	drop_caches();
+
 	mrc = mntopts[0]
 	    ? mount(device, g_st.mnt, "btrfs", mflags, mntopts)
 	    : mount(device, g_st.mnt, "btrfs", mflags, "");
@@ -894,14 +914,16 @@ run_single_test(const char *device, const char *location,
 
 	{
 		struct cpu_sample rd_cpu_before = read_cpu();
-		unsigned long long rd_sec_before = read_sectors_read(device);
+		unsigned long long rd_sec_before = read_disk_field(device,
+								   STAT_SECTORS_READ);
 		struct timespec ts_rd_start, ts_rd_end;
 		clock_gettime(CLOCK_MONOTONIC_RAW, &ts_rd_start);
 		int rdrc = read_tree(g_st.mnt);
 		clock_gettime(CLOCK_MONOTONIC_RAW, &ts_rd_end);
 		if (rdrc == 0) {
 			struct cpu_sample rd_cpu_after = read_cpu();
-			unsigned long long rd_sec_after = read_sectors_read(device);
+			unsigned long long rd_sec_after = read_disk_field(device,
+									  STAT_SECTORS_READ);
 			double rd_elapsed = ts_diff_sec(&ts_rd_start, &ts_rd_end);
 			out->read_rate_mib = rd_elapsed > 0
 				? (double)data_size / rd_elapsed
@@ -929,15 +951,20 @@ run_single_test(const char *device, const char *location,
 /* Test count                                                         */
 /* ------------------------------------------------------------------ */
 
+/* Simple algorithms tested once each (no level parameter). */
+static const char *const g_simple_algos[] = { "lzo", "zlib" };
+#define N_SIMPLE_ALGOS ((int)(sizeof(g_simple_algos) / sizeof(g_simple_algos[0])))
+
 static int
 total_test_count(const struct config *cfg)
 {
 	int zstd_n = cfg->zstd_max - cfg->zstd_min + 1;
+	int simple = N_SIMPLE_ALGOS;
 	int per_loc;
 	if (cfg->force == FORCE_BOTH)
-		per_loc = 2 * zstd_n + 2 + 1;
+		per_loc = 2 * zstd_n + 2 * simple + 1;
 	else
-		per_loc = zstd_n + 1 + 1;
+		per_loc = zstd_n + simple + 1;
 	int locations = cfg->hdd_percent > 0 ? 2 : 1;
 	return per_loc * locations * cfg->repeat;
 }
@@ -945,6 +972,43 @@ total_test_count(const struct config *cfg)
 /* ------------------------------------------------------------------ */
 /* Main test loop                                                     */
 /* ------------------------------------------------------------------ */
+
+/* Run all force-variants and repeats for one target. Every attempted
+ * test advances progress (for ETA accuracy); only successes are stored. */
+static void
+run_target(const struct config *cfg, const char *device, const char *location,
+	   const char *algo, const char *target,
+	   int *test_num, int *tests_done, int total,
+	   const struct timespec *overall_start)
+{
+	int do_std, do_frc;
+	get_force_variants(algo, cfg->force, &do_std, &do_frc);
+
+	for (int v = 0; v < 2; v++) {
+		if (v == 0 && !do_std)
+			continue;
+		if (v == 1 && !do_frc)
+			continue;
+		for (int r = 0; r < cfg->repeat; r++) {
+			if (g_signaled)
+				return;
+			(*test_num)++;
+			char eta_buf[128];
+			format_eta(overall_start, *tests_done, total,
+				   eta_buf, sizeof(eta_buf));
+			status("Test %d/%d: %s %s at %s (repeat %d/%d)%s\n",
+			       *test_num, total, target, v ? "force" : "standard",
+			       location, r + 1, cfg->repeat, eta_buf);
+			struct result *res = &g_results[g_nresults];
+			if (run_single_test(device, location, target, v,
+					    g_st.data_size, res) == 0)
+				g_nresults++;
+			(*tests_done)++;
+			if (g_nresults >= MAX_RESULTS)
+				return;
+		}
+	}
+}
 
 static void
 run_all_tests(const struct config *cfg)
@@ -968,104 +1032,31 @@ run_all_tests(const struct config *cfg)
 		for (int lvl = cfg->zstd_max; lvl >= cfg->zstd_min; lvl--) {
 			char target[32];
 			snprintf(target, sizeof(target), "zstd:%d", lvl);
-			int do_std, do_frc;
-			get_force_variants("zstd", cfg->force, &do_std, &do_frc);
-
-			for (int v = 0; v < 2; v++) {
-				if (v == 0 && !do_std)
-					continue;
-				if (v == 1 && !do_frc)
-					continue;
-				for (int r = 0; r < cfg->repeat; r++) {
-					if (g_signaled)
-						return;
-					test_num++;
-					char eta_buf[128];
-					format_eta(&overall_start, tests_done,
-						   total, eta_buf,
-						   sizeof(eta_buf));
-					status("Test %d/%d: %s %s at %s (repeat %d/%d)%s\n",
-					       test_num, total, target,
-					       v ? "force" : "standard",
-					       locations[loc],
-					       r + 1, cfg->repeat,
-					       eta_buf);
-					struct result *res = &g_results[g_nresults];
-					if (run_single_test(devices[loc],
-							    locations[loc],
-							    target, v,
-							    g_st.data_size,
-							    res) == 0) {
-						g_nresults++;
-						tests_done++;
-					} else
-						test_num--;
-					if (g_nresults >= MAX_RESULTS)
-						return;
-				}
+			run_target(cfg, devices[loc], locations[loc],
+				   "zstd", target, &test_num, &tests_done,
+				   total, &overall_start);
+			if (g_signaled || g_nresults >= MAX_RESULTS) {
+				status("\n");
+				return;
 			}
 		}
 
-		{
-			int do_std, do_frc;
-			get_force_variants("lzo", cfg->force, &do_std, &do_frc);
-			for (int v = 0; v < 2; v++) {
-				if (v == 0 && !do_std)
-					continue;
-				if (v == 1 && !do_frc)
-					continue;
-				for (int r = 0; r < cfg->repeat; r++) {
-					if (g_signaled)
-						return;
-					test_num++;
-					char eta_buf[128];
-					format_eta(&overall_start, tests_done,
-						   total, eta_buf,
-						   sizeof(eta_buf));
-					status("Test %d/%d: lzo %s at %s (repeat %d/%d)%s\n",
-					       test_num, total,
-					       v ? "force" : "standard",
-					       locations[loc],
-					       r + 1, cfg->repeat,
-					       eta_buf);
-					struct result *res = &g_results[g_nresults];
-					if (run_single_test(devices[loc],
-							    locations[loc],
-							    "lzo", v,
-							    g_st.data_size,
-							    res) == 0) {
-						g_nresults++;
-						tests_done++;
-					} else
-						test_num--;
-					if (g_nresults >= MAX_RESULTS)
-						return;
-				}
+		for (int a = 0; a < N_SIMPLE_ALGOS; a++) {
+			run_target(cfg, devices[loc], locations[loc],
+				   g_simple_algos[a], g_simple_algos[a],
+				   &test_num, &tests_done, total, &overall_start);
+			if (g_signaled || g_nresults >= MAX_RESULTS) {
+				status("\n");
+				return;
 			}
 		}
 
-		for (int r = 0; r < cfg->repeat; r++) {
-			if (g_signaled)
-				return;
-			test_num++;
-			char eta_buf[128];
-			format_eta(&overall_start, tests_done, total,
-				   eta_buf, sizeof(eta_buf));
-			status("Test %d/%d: none at %s (repeat %d/%d)%s\n",
-			       test_num, total, locations[loc],
-			       r + 1, cfg->repeat, eta_buf);
-			struct result *res = &g_results[g_nresults];
-			if (run_single_test(devices[loc],
-					    locations[loc],
-					    "none", 0,
-					    g_st.data_size,
-					    res) == 0) {
-				g_nresults++;
-				tests_done++;
-			} else
-				test_num--;
-			if (g_nresults >= MAX_RESULTS)
-				return;
+		run_target(cfg, devices[loc], locations[loc],
+			   "none", "none", &test_num, &tests_done,
+			   total, &overall_start);
+		if (g_signaled || g_nresults >= MAX_RESULTS) {
+			status("\n");
+			return;
 		}
 	}
 
@@ -1101,6 +1092,8 @@ struct avg {
 	double read_cpu_pct;
 	unsigned long long read_disk_bytes;
 	double read_disk_rate_mib;
+	double rate_sync_stdev;
+	double read_rate_stdev;
 };
 
 static int
@@ -1130,6 +1123,7 @@ compute_averages(struct avg *avgs, int max_avgs)
 		unsigned long long sum_read_disk = 0;
 		double sum_elapsed_sync = 0;
 		unsigned long long sum_compressed = 0, sum_disk = 0;
+		double sq_rate_sync = 0, sq_read_rate = 0;
 		int sec_red_count = 0;
 
 		for (int j = i; j < g_nresults; j++) {
@@ -1150,6 +1144,10 @@ compute_averages(struct avg *avgs, int max_avgs)
 			sum_read_cpu      += g_results[j].read_cpu_pct;
 			sum_read_disk     += g_results[j].read_disk_bytes;
 			sum_read_disk_rate += g_results[j].read_disk_rate_mib;
+			sq_rate_sync      += g_results[j].rate_sync_mib
+					   * g_results[j].rate_sync_mib;
+			sq_read_rate      += g_results[j].read_rate_mib
+					   * g_results[j].read_rate_mib;
 			if (isfinite(g_results[j].sec_per_reduction)) {
 				sum_sec_red += g_results[j].sec_per_reduction;
 				sec_red_count++;
@@ -1170,6 +1168,11 @@ compute_averages(struct avg *avgs, int max_avgs)
 		a->read_cpu_pct       = sum_read_cpu / count;
 		a->read_disk_bytes    = sum_read_disk / count;
 		a->read_disk_rate_mib = sum_read_disk_rate / count;
+		/* population standard deviation; 0 when count == 1 */
+		double var_wr = sq_rate_sync / count - a->rate_sync_mib * a->rate_sync_mib;
+		double var_rd = sq_read_rate / count - a->read_rate_mib * a->read_rate_mib;
+		a->rate_sync_stdev = var_wr > 0 ? sqrt(var_wr) : 0;
+		a->read_rate_stdev = var_rd > 0 ? sqrt(var_rd) : 0;
 		a->count = count;
 		navg++;
 	}
@@ -1346,7 +1349,7 @@ print_best(struct avg *avgs, int navg)
 	int nlocs = g_cfg.hdd_percent > 0 ? 3 : 1;
 
 	for (int li = 0; li < nlocs; li++) {
-		struct avg subset[MAX_RESULTS];
+		static struct avg subset[MAX_RESULTS];
 		int nsub = 0;
 		for (int i = 0; i < navg; i++) {
 			if (strcmp(avgs[i].location, locs[li]) == 0)
@@ -1480,7 +1483,8 @@ export_csv(struct avg *avgs, int navg)
 	}
 
 	fprintf(f, "Location,Target,WrMiB/s,RdMiB/s,WrDisk_MiB/s,"
-		   "RdDisk_MiB/s,Compressed,Ratio,WrCPU%%,RdCPU%%,Sec/Red,Force,n\n");
+		   "RdDisk_MiB/s,Compressed,Ratio,WrCPU%%,RdCPU%%,Sec/Red,"
+		   "Force,n,WrStddev,RdStddev\n");
 
 	for (int i = 0; i < navg; i++) {
 		char sr[32];
@@ -1488,7 +1492,7 @@ export_csv(struct avg *avgs, int navg)
 			snprintf(sr, sizeof(sr), "%.4f", avgs[i].sec_per_reduction);
 		else
 			snprintf(sr, sizeof(sr), "inf");
-		fprintf(f, "%s,%s,%.1f,%.1f,%.1f,%.1f,%llu,%.4f,%.1f,%.1f,%s,%s,%d\n",
+		fprintf(f, "%s,%s,%.1f,%.1f,%.1f,%.1f,%llu,%.4f,%.1f,%.1f,%s,%s,%d,%.2f,%.2f\n",
 			avgs[i].location, avgs[i].target,
 			avgs[i].rate_sync_mib,
 			avgs[i].read_rate_mib,
@@ -1497,16 +1501,26 @@ export_csv(struct avg *avgs, int navg)
 			avgs[i].compressed_bytes, avgs[i].ratio,
 			avgs[i].cpu_pct, avgs[i].read_cpu_pct,
 			sr,
-			avgs[i].force_label, avgs[i].count);
+			avgs[i].force_label, avgs[i].count,
+			avgs[i].rate_sync_stdev, avgs[i].read_rate_stdev);
 	}
 
 	fprintf(f, "\n# compbench " VERSION "\n");
 	fprintf(f, "# Archive: %s\n", g_cfg.archive);
 	fprintf(f, "# Dataset: %llu bytes\n", g_st.data_size);
-	fprintf(f, "# Archive: %llu bytes\n", g_st.archive_size);
+	fprintf(f, "# Archive size: %llu bytes\n", g_st.archive_size);
 	fprintf(f, "# Repeats: %d\n", g_cfg.repeat);
 	fprintf(f, "# zstd: %d-%d\n", g_cfg.zstd_min, g_cfg.zstd_max);
-	fprintf(f, "# Force: %d\n", g_cfg.force);
+	fprintf(f, "# Force: %s\n", force_mode_name(g_cfg.force));
+	{
+		struct utsname uts;
+		if (uname(&uts) == 0) {
+			fprintf(f, "# Host: %s\n", uts.nodename);
+			fprintf(f, "# Kernel: %s\n", uts.release);
+		}
+		time_t now = time(NULL);
+		fprintf(f, "# Date: %s", ctime(&now));
+	}
 
 	fclose(f);
 	msg("Results saved to %s\n", g_cfg.output_csv);
@@ -1528,21 +1542,38 @@ parse_force(const char *s)
 	return FORCE_NONE;
 }
 
+static int
+parse_int_opt(const char *s, const char *opt)
+{
+	char *end;
+	errno = 0;
+	long v = strtol(s, &end, 10);
+	if (errno != 0 || end == s || *end != '\0')
+		die("invalid integer for --%s: '%s'", opt, s);
+	return (int)v;
+}
+
 static void
 parse_zstd(const char *s, int *min, int *max)
 {
-	const char *sep = NULL;
-	for (const char *p = s + 1; *p; p++) {
-		if (*p == '-' && isdigit(*(p - 1))) {
-			sep = p;
-			break;
-		}
-	}
-	if (sep) {
-		*min = atoi(s);
-		*max = atoi(sep + 1);
+	char *end;
+	errno = 0;
+	long lo = strtol(s, &end, 10);
+	if (errno != 0 || end == s)
+		die("invalid zstd range: %s (-15..15)", s);
+
+	if (*end == '\0') {
+		*min = *max = (int)lo;
+	} else if (*end == '-') {
+		char *end2;
+		errno = 0;
+		long hi = strtol(end + 1, &end2, 10);
+		if (errno != 0 || end2 == end + 1 || *end2 != '\0')
+			die("invalid zstd range: %s (-15..15)", s);
+		*min = (int)lo;
+		*max = (int)hi;
 	} else {
-		*min = *max = atoi(s);
+		die("invalid zstd range: %s (-15..15)", s);
 	}
 	if (*min < -15 || *max > 15 || *min > *max)
 		die("invalid zstd range: %s (-15..15)", s);
@@ -1555,6 +1586,7 @@ usage(FILE *out)
 "Usage: compbench [OPTIONS] DEVICE ARCHIVE\n"
 "\n"
 "Btrfs transparent compression benchmark.\n"
+"Tests zstd (configurable levels), lzo, zlib, and no compression.\n"
 "DEVICE is the block device to test (e.g. /dev/sdX).\n"
 "ARCHIVE is a local path or URL to a .tar.xz archive.\n"
 "\n"
@@ -1609,7 +1641,7 @@ main(int argc, char **argv)
 	while ((c = getopt_long(argc, argv, "n:f:o:vVh", long_opts, NULL)) != -1) {
 		switch (c) {
 		case 'n':
-			g_cfg.repeat = atoi(optarg);
+			g_cfg.repeat = parse_int_opt(optarg, "repeat");
 			if (g_cfg.repeat < 1)
 				die("repeat must be >= 1");
 			break;
@@ -1620,7 +1652,7 @@ main(int argc, char **argv)
 			g_cfg.force = parse_force(optarg);
 			break;
 		case 'H':
-			g_cfg.hdd_percent = atoi(optarg);
+			g_cfg.hdd_percent = parse_int_opt(optarg, "hdd");
 			if (g_cfg.hdd_percent < 1 || g_cfg.hdd_percent > 50)
 				die("hdd percentage must be 1-50");
 			break;
@@ -1754,7 +1786,10 @@ main(int argc, char **argv)
 		if (run_cmd("sgdisk", end_arg, g_cfg.device, NULL) != 0)
 			die("failed to create second partition");
 		run_cmd("partprobe", g_cfg.device, NULL);
-		usleep(500000);
+		if (wait_for_block_dev(g_st.part1, 5000) < 0 ||
+		    wait_for_block_dev(g_st.part2, 5000) < 0)
+			die("partitions did not appear: %s, %s",
+			    g_st.part1, g_st.part2);
 		g_st.partitions_created = 1;
 		verbose("Partitions: %s (begin) and %s (end)\n",
 			g_st.part1, g_st.part2);
@@ -1803,7 +1838,7 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	struct avg avgs[MAX_RESULTS];
+	static struct avg avgs[MAX_RESULTS];
 	int navg = compute_averages(avgs, MAX_RESULTS);
 
 	print_results_table(avgs, navg);

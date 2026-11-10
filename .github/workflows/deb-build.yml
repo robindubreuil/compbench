@@ -138,13 +138,16 @@ jobs:
             debian:trixie \
             bash -c '
               set -e
+              # Multiarch i386 libc so dpkg-shlibdeps can resolve the
+              # cross-built binary ELF32 libs into Depends.
+              dpkg --add-architecture i386
               n=0
               until apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=5 update; do
                 n=$((n+1))
                 if [ "$n" -ge 3 ]; then exit 1; fi
                 sleep 5
               done
-              apt-get install -y -o Acquire::Retries=5 dpkg-dev debhelper build-essential fakeroot gcc make crossbuild-essential-i386
+              apt-get install -y -o Acquire::Retries=5 dpkg-dev debhelper build-essential fakeroot gcc make crossbuild-essential-i386 libc6:i386
               dpkg-buildpackage -us -uc -ai386
               mv ../compbench_*.deb ./
             '

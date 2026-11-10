@@ -18,5 +18,9 @@ override_dh_auto_build:
 override_dh_auto_install:
 	$(MAKE) install DESTDIR=debian/compbench PREFIX=/usr
 
+# The suite needs loop devices and root; it is run manually (make test),
+# not during package builds.
+override_dh_auto_test:
+
 override_dh_usrlocal:
 	# Prevent installing into /usr/local

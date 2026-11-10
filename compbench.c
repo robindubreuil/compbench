@@ -36,7 +36,7 @@
 
 #include <linux/fs.h>
 
-#define VERSION "2.3"
+#define VERSION "2.4"
 #define MAX_RESULTS 4096
 #define BUF_SIZE (1 << 20)
 
@@ -174,6 +174,22 @@ user_abort(void)
 	msg("Aborted.\n");
 	cleanup();
 	_exit(1);
+}
+
+/* Read one line of user input at a confirmation prompt. EOF counts as
+ * declining; a signal (fgets fails with EINTR since the handler runs
+ * without SA_RESTART) exits like a mid-run interrupt. */
+static void
+prompt_line(char *buf, size_t sz)
+{
+	if (fgets(buf, sz, stdin))
+		return;
+	if (g_signaled) {
+		msg("\nInterrupted.\n");
+		cleanup();
+		_exit(1);
+	}
+	user_abort();
 }
 
 /* Returns pointer to static buffer; safe for single-threaded use only. */
@@ -359,6 +375,25 @@ drop_caches(void)
 	}
 }
 
+/* Negative zstd levels need kernel 6.15+; on older kernels every mount
+ * using one fails with EINVAL and the tests are silently counted as
+ * failures. Warn up front instead of letting the user discover it in
+ * the results table. */
+static void
+warn_old_kernel_negative_zstd(void)
+{
+	struct utsname uts;
+	int major = 0, minor = 0;
+	if (uname(&uts) != 0)
+		return;
+	if (sscanf(uts.release, "%d.%d", &major, &minor) != 2)
+		return;
+	if (major < 6 || (major == 6 && minor < 15))
+		msg("warning: kernel %s does not support negative zstd "
+		    "levels (6.15+ required); negative-level tests will "
+		    "fail\n", uts.release);
+}
+
 /* ------------------------------------------------------------------ */
 /* External command execution (fork/exec, no shell)                   */
 /* ------------------------------------------------------------------ */
@@ -524,6 +559,7 @@ copy_tree(const char *src, const char *dst)
 			if (symlink(target, dp) < 0)
 				continue;
 		} else {
+			verbose("skipping special file: %s\n", sp);
 			continue;
 		}
 
@@ -570,6 +606,10 @@ read_tree(const char *path)
 				if (n < 0) {
 					if (errno == EINTR)
 						continue;
+					/* Short read: count the read-back
+					 * as failed rather than silently
+					 * inflating RdMiB/s. */
+					rc = -1;
 					break;
 				}
 			}
@@ -773,6 +813,26 @@ print_disk_info(const char *device)
 		msg("Disk: %s (%s)\n", device, bytes_human(size));
 }
 
+/* --hdd creates partitions [1MiB, 1MiB+X) and [size-X, size), with
+ * X = size*percent/100. Both must fit without overlapping each other
+ * or the secondary GPT table (~17KiB). Validate before anything
+ * destructive: a failure after sgdisk --zap-all would leave an erased
+ * disk with no partitions at all. */
+static void
+validate_hdd_fit(const char *device, int percent)
+{
+	unsigned long long disk_size = get_disk_size(device);
+	unsigned long long part_bytes =
+	    disk_size * (unsigned long long)percent / 100;
+	if (part_bytes < (1ULL << 20) ||
+	    2 * part_bytes + (1ULL << 20) + 34ULL * 512 > disk_size)
+		die("--hdd %d%% does not fit on %s (%s): two %s partitions "
+		    "plus the 1 MiB offset and GPT tables do not fit; "
+		    "use a lower percentage",
+		    percent, device, bytes_human(disk_size),
+		    bytes_human(part_bytes));
+}
+
 /* ------------------------------------------------------------------ */
 /* Archive operations                                                 */
 /* ------------------------------------------------------------------ */
@@ -928,7 +988,10 @@ run_single_test(const char *device, const char *location,
 	clock_gettime(CLOCK_MONOTONIC_RAW, &ts_start);
 
 	if (copy_tree(g_st.tmpfs, g_st.mnt) < 0) {
-		msg("warning: copy failed for %s\n", target);
+		/* A signal cutting the copy short is reported by the main
+		 * loop ("Interrupted."), not as a per-test failure. */
+		if (!g_signaled)
+			msg("warning: copy failed for %s\n", target);
 		if (unmount_safe(g_st.mnt) < 0)
 			msg("warning: cannot unmount %s: %s\n",
 			    g_st.mnt, strerror(errno));
@@ -1058,18 +1121,20 @@ static const char *const g_simple_algos[] = { "lzo", "zlib" };
 
 /* Total number of tests the configuration requests. main() rejects
  * configurations exceeding MAX_RESULTS up front, so g_results can never
- * overflow (g_nresults grows at most once per planned test). */
-static int
+ * overflow (g_nresults grows at most once per planned test). The product
+ * is computed in 64 bits: a 32-bit multiply can wrap past MAX_RESULTS
+ * (e.g. --repeat 613566757 with 70 tests per repeat wraps to 30). */
+static long long
 total_test_count(const struct config *cfg)
 {
-	int zstd_n = cfg->zstd_max - cfg->zstd_min + 1;
-	int simple = N_SIMPLE_ALGOS;
-	int per_loc;
+	long long zstd_n = cfg->zstd_max - cfg->zstd_min + 1;
+	long long simple = N_SIMPLE_ALGOS;
+	long long per_loc;
 	if (cfg->force == FORCE_ALL_VARIANTS)
 		per_loc = 2 * zstd_n + 2 * simple + 1;
 	else
 		per_loc = zstd_n + simple + 1;
-	int locations = cfg->hdd_percent > 0 ? 2 : 1;
+	long long locations = cfg->hdd_percent > 0 ? 2 : 1;
 	return per_loc * locations * cfg->repeat;
 }
 
@@ -1126,7 +1191,7 @@ run_all_tests(const struct config *cfg)
 	devices[1] = g_st.part2;
 	nlocations = cfg->hdd_percent > 0 ? 2 : 1;
 
-	int total = total_test_count(cfg);
+	int total = (int)total_test_count(cfg); /* validated <= MAX_RESULTS */
 	int test_num = 0;
 	int tests_done = 0;
 	struct timespec overall_start;
@@ -1712,7 +1777,8 @@ usage(FILE *out)
 "\n"
 "Options:\n"
 "  -n, --repeat N          Repeat each test N times (default: 1)\n"
-"      --zstd MIN-MAX      zstd level range (-15..-1 or 1..15, default: 1-15)\n"
+"      --zstd LEVEL|RANGE  zstd level or MIN-MAX range\n"
+"                         (-15..-1 or 1..15, default: 1-15)\n"
 "  -f, --force MODE        Force mode: none|zstd|lzo|all|both (default: none)\n"
 "      --hdd PERCENT       Test on first/last N%% of disk (1-50)\n"
 "  -o, --output FILE       Export results to CSV\n"
@@ -1804,9 +1870,9 @@ main(int argc, char **argv)
 	g_cfg.device  = argv[optind];
 	g_cfg.archive = argv[optind + 1];
 
-	int total = total_test_count(&g_cfg);
+	long long total = total_test_count(&g_cfg);
 	if (total > MAX_RESULTS)
-		die("configuration requests %d tests, maximum is %d "
+		die("configuration requests %lld tests, maximum is %d "
 		    "(lower --repeat or narrow --zstd)", total, MAX_RESULTS);
 
 	if (geteuid() != 0)
@@ -1817,6 +1883,12 @@ main(int argc, char **argv)
 		die("cannot access %s: %s", g_cfg.device, strerror(errno));
 	if (!S_ISBLK(dev_st.st_mode))
 		die("%s is not a block device", g_cfg.device);
+
+	if (g_cfg.hdd_percent > 0)
+		validate_hdd_fit(g_cfg.device, g_cfg.hdd_percent);
+
+	if (g_cfg.zstd_min < 0)
+		warn_old_kernel_negative_zstd();
 
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
@@ -1832,8 +1904,7 @@ main(int argc, char **argv)
 	msg("Do you confirm? (yes/no): ");
 	fflush(stdout);
 	char confirm[16];
-	if (!fgets(confirm, sizeof(confirm), stdin))
-		user_abort();
+	prompt_line(confirm, sizeof(confirm));
 	confirm[strcspn(confirm, "\r\n")] = '\0';
 	if (strcmp(confirm, "yes") != 0)
 		user_abort();
@@ -1877,18 +1948,18 @@ main(int argc, char **argv)
 		msg("Continue anyway? (y/n): ");
 		fflush(stdout);
 		char answer[8];
-		if (!fgets(answer, sizeof(answer), stdin)
-		    || (answer[0] != 'y' && answer[0] != 'Y'))
+		prompt_line(answer, sizeof(answer));
+		if (answer[0] != 'y' && answer[0] != 'Y')
 			user_abort();
 	}
 
-	msg("\nThis benchmark will run %d tests on %s.\n",
+	msg("\nThis benchmark will run %lld tests on %s.\n",
 	    total, g_cfg.device);
 	msg("Continue? (y/n): ");
 	fflush(stdout);
 	char answer[8];
-	if (!fgets(answer, sizeof(answer), stdin)
-	    || (answer[0] != 'y' && answer[0] != 'Y'))
+	prompt_line(answer, sizeof(answer));
+	if (answer[0] != 'y' && answer[0] != 'Y')
 		user_abort();
 
 	if (g_cfg.hdd_percent > 0) {

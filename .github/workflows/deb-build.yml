@@ -23,6 +23,28 @@ jobs:
       - name: Build with gcc -fanalyzer
         run: make CFLAGS="-Wall -Wextra -Werror -O2 -fanalyzer"
 
+  # test.sh rebuilds from clean; the sanitizer flags travel through the
+  # environment (the Makefile's ?= keeps them). Every test.sh assertion
+  # then runs against the instrumented binary.
+  sanitize:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make btrfs-progs xz-utils gdisk curl
+
+      - name: Run Tests under ASan/UBSan
+        run: |
+          sudo \
+            CFLAGS="-O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
+            LDFLAGS="-fsanitize=address,undefined" \
+            bash test.sh
+
   test-ubuntu-24-04:
     runs-on: ubuntu-24.04
 
@@ -83,3 +105,25 @@ jobs:
         with:
           name: compbench-deb-${{ matrix.debarch }}
           path: compbench_*.deb
+
+  # Lint the package produced by the same baseline image as the build
+  # matrix. dpkg-buildpackage writes its artifacts one level above the
+  # source tree (= / inside the container).
+  lintian:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Build Package and Run Lintian
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src \
+            debian:bookworm \
+            bash -c "
+              set -e
+              apt-get update
+              apt-get install -y dpkg-dev debhelper build-essential fakeroot gcc make lintian
+              dpkg-buildpackage -us -uc
+              lintian --fail-on error,warning /compbench_*.changes
+            "

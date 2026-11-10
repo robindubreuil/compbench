@@ -3,7 +3,7 @@ Section: utils
 Priority: optional
 Maintainer: Robin DUBREUIL <robin@dubreuil.pro>
 Build-Depends: debhelper-compat (= 13)
-Standards-Version: 4.6.2
+Standards-Version: 4.7.2
 Homepage: https://github.com/Robin-DUBREUIL/compbench/
 
 Package: compbench

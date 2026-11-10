@@ -1,3 +1,47 @@
+compbench (2.4) unstable; urgency=medium
+
+  * Fix a 32-bit overflow in the total test count: a crafted --repeat
+    value could wrap the product past the 4096-test cap and overflow
+    the result store on long runs. The count is now computed in 64
+    bits (regression-tested in test.sh).
+  * Validate that the two --hdd partitions fit on the device before
+    anything destructive; previously a non-fitting percentage erased
+    the disk and then died when the second partition overlapped the
+    first.
+  * Warn at startup when negative zstd levels are requested on a
+    kernel older than 6.15 (mounts fail with EINVAL there and the
+    tests are silently counted as failures).
+  * Print "Interrupted." (exit 1) when SIGINT hits a confirmation
+    prompt instead of a misleading "Aborted.", and stop printing the
+    "copy failed" warning when a test is cut short by SIGINT.
+  * read_tree: treat a short or failed read as a failed read-back
+    instead of silently counting it as success (it inflated
+    RdMiB/s).
+  * Verbose mode now notes special files skipped during the dataset
+    copy.
+  * usage()/README: document the single-level form of --zstd (e.g.
+    --zstd 5); the README example now mentions zlib.
+  * Manual page: replace the raw UTF-8 multiplication signs with the
+    groff \(mu escape so LC_ALL=C rendering is correct; document the
+    Sec/Red time basis, the WrCPU% sync dilution, the fixed test
+    order, and hard-link dataset caveats (README too).
+  * Makefile: default CFLAGS now include -fstack-protector-strong so
+    standalone builds match the Debian package hardening.
+  * CI: add an AddressSanitizer/UndefinedBehaviorSanitizer test job
+    and a lintian check of the built package.
+  * Bump Standards-Version to 4.7.2 (no changes needed; package is
+    lintian-clean at error,warning severity).
+  * Add a "make test" target running the loop-device suite, and skip
+    dh_auto_test during package builds (the suite needs loop devices
+    and root). Previously "make test" hit GNU make implicit rules and
+    silently materialized a stray executable copy of test.sh named
+    "test" inside the source tree during dpkg-buildpackage.
+  * test.sh: add the test-count overflow regression probe, a --hdd
+    fit-rejection case, and a SIGINT-at-prompt case; renumber the
+    tests (16 was skipped).
+
+ -- Robin DUBREUIL <robin@dubreuil.pro>  Tue, 10 Nov 2026 23:30:00 +0100
+
 compbench (2.3) unstable; urgency=medium
 
   * Fix read benchmark measuring cached data instead of disk: drop

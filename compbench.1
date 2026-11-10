@@ -1,4 +1,4 @@
-.TH compbench 1 "November 2026" "compbench 2.3" "User Commands"
+.TH compbench 1 "November 2026" "compbench 2.4" "User Commands"
 .SH NAME
 compbench \- benchmark Btrfs transparent compression
 .SH SYNOPSIS
@@ -61,8 +61,8 @@ Repeat each test
 times and average the results (default: 1). When
 .I N
 > 1, the standard deviation of the write and read throughput is also
-reported in the CSV output. The total number of tests (levels ×
-algorithms × variants × zones × repeats) may not exceed 4096.
+reported in the CSV output. The total number of tests (levels \(mu
+algorithms \(mu variants \(mu zones \(mu repeats) may not exceed 4096.
 .TP
 .BR \-\-zstd = MIN\-MAX
 zstd compression level range
@@ -182,6 +182,33 @@ Cold reads require a writable
 When the page cache cannot be dropped (e.g. inside some containers),
 .I RdMiB/s
 is inflated; a warning is printed.
+.IP \(bu 2
+.I Sec/Red
+is derived from the copy-only write time (before
+.BR sync () ),
+whereas
+.I WrMiB/s
+includes the
+.B sync()
+wait; the two columns are therefore not on the same time basis.
+.IP \(bu 2
+The CPU sample behind
+.I WrCPU%
+spans the whole write phase, including the
+.B sync()
+wait. Because iowait counts as idle, slow devices understate the
+compression CPU cost.
+.IP \(bu 2
+Tests run in a fixed order (highest zstd level first). On long runs,
+thermal throttling or flash SLC-cache exhaustion can penalize later
+targets; use
+.B \-\-repeat
+and compare averaged results.
+.IP \(bu 2
+Hard links in the archive are written as independent copies (shifting
+.IR Ratio
+for hard-link-heavy datasets), and special files are skipped (noted
+in verbose mode).
 .SH EXIT STATUS
 .TP
 .B 0

@@ -61,7 +61,8 @@ ARCHIVE is a local path or URL to a .tar.xz archive.
 
 Options:
   -n, --repeat N          Repeat each test N times (default: 1)
-      --zstd MIN-MAX      zstd level range (-15..-1 or 1..15, default: 1-15)
+      --zstd LEVEL|RANGE  zstd level or MIN-MAX range
+                         (-15..-1 or 1..15, default: 1-15)
   -f, --force MODE        Force mode: none|zstd|lzo|all|both (default: none)
       --hdd PERCENT       Test on first/last N% of disk (1-50)
   -o, --output FILE       Export results to CSV
@@ -89,7 +90,7 @@ sudo compbench /dev/sdX https://example.com/archive.tar.xz -n 3 --zstd 1-10 -f b
 ```
 
 This will:
-- Test zstd levels 10 down to 1, plus lzo and no compression
+- Test zstd levels 10 down to 1, plus lzo, zlib and no compression
 - Repeat the sequence 3 times with averaged results
 - Run both standard and force modes with a comparison table
 - Test on the first and last 10% of the disk
@@ -116,6 +117,10 @@ All metrics use kernel interfaces directly:
 - **Ratio granularity.** The compression ratio is measured with `statvfs()`. Btrfs allocates space in chunks (and metadata globally), so small datasets can show quantized ratios — use a dataset that is large relative to the test filesystem.
 - **`sync()` is system-wide.** Synced write timings (`WrMiB/s`) include flushing any unrelated dirty data on the machine.
 - **Cold reads need a writable `/proc/sys/vm/drop_caches`.** When the page cache cannot be dropped (e.g. inside some containers), `RdMiB/s` may be inflated; compbench prints a warning.
+- **`Sec/Red` vs `WrMiB/s` time basis.** `Sec/Red` is derived from the copy-only write time, while `WrMiB/s` includes the `sync()` wait — the two columns are not on the same time basis.
+- **`WrCPU%` includes the sync wait.** The CPU sample spans the whole write phase (copy + `sync()`); iowait counts as idle, so on slow devices the compression CPU cost is understated.
+- **Fixed test order.** Targets always run highest zstd level first. On long runs, thermal throttling or SLC-cache exhaustion can penalize later targets; use `--repeat` and compare averaged results.
+- **Dataset shape.** Hard links in the archive are written as independent files (shifting `Ratio` for hard-link-heavy datasets); special files are skipped (noted in verbose mode).
 
 ### Exit Codes
 

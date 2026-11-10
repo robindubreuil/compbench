@@ -176,6 +176,15 @@ assert_exit "repeat 0" 1 "$COMPBENCH" -n 0 /dev/loop0 foo.tar.xz
 assert_exit "hdd 0" 1 "$COMPBENCH" --hdd 0 /dev/loop0 foo.tar.xz
 assert_exit "hdd 60" 1 "$COMPBENCH" --hdd 60 /dev/loop0 foo.tar.xz
 assert_exit "too many tests rejected" 1 "$COMPBENCH" -n 1000 --zstd 1-15 -f both --hdd 50 /dev/loop0 foo.tar.xz
+# Regression: 70 x 613566757 wraps to 30 in 32-bit math and used to
+# bypass the 4096-test cap; the count must be computed in 64 bits.
+assert_exit "test-count overflow rejected" 1 "$COMPBENCH" -n 613566757 --zstd 1-15 -f both --hdd 50 /dev/loop0 foo.tar.xz
+OUT=$("$COMPBENCH" -n 613566757 --zstd 1-15 -f both --hdd 50 /dev/loop0 foo.tar.xz 2>&1) || true
+if echo "$OUT" | grep -q "42949672990"; then
+	pass "overflow probe reports the true test count"
+else
+	fail "overflow probe — expected true count 42949672990, got: $OUT"
+fi
 assert_exit "device does not exist" 1 "$COMPBENCH" --zstd 1-1 /dev/nonexistent-compbench foo.tar.xz
 assert_exit "device is not a block device" 1 "$COMPBENCH" --zstd 1-1 /dev/null foo.tar.xz
 
@@ -372,9 +381,9 @@ assert_output "verbose RAM info" "${TESTDIR}/test15.log" "Available RAM:"
 assert_output "verbose extraction info" "${TESTDIR}/test15.log" "Extraction complete"
 
 # ============================================================
-# Test 17: CSV with force=both
+# Test 16: CSV with force=both
 # ============================================================
-echo "=== Test 17: CSV with force=both ==="
+echo "=== Test 16: CSV with force=both ==="
 CSVPATH2="${TESTDIR}/results_both.csv"
 printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f both -o "$CSVPATH2" "$LOOP" "$ARCHIVE" 2>&1 ||
 	fail "force=both CSV benchmark failed"
@@ -388,39 +397,61 @@ else
 fi
 
 # ============================================================
-# Test 18: Single zstd level (--zstd 5)
+# Test 17: Single zstd level (--zstd 5)
 # ============================================================
-echo "=== Test 18: Single zstd level (--zstd 5) ==="
-printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 5 "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test18.log" ||
+echo "=== Test 17: Single zstd level (--zstd 5) ==="
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 5 "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test17.log" ||
 	fail "single zstd level benchmark failed"
 
-assert_output "zstd:5 present" "${TESTDIR}/test18.log" "zstd:5"
-assert_not_output "zstd:4 absent" "${TESTDIR}/test18.log" "zstd:4"
-assert_not_output "zstd:6 absent" "${TESTDIR}/test18.log" "zstd:6"
+assert_output "zstd:5 present" "${TESTDIR}/test17.log" "zstd:5"
+assert_not_output "zstd:4 absent" "${TESTDIR}/test17.log" "zstd:4"
+assert_not_output "zstd:6 absent" "${TESTDIR}/test17.log" "zstd:6"
 
 # ============================================================
-# Test 19: HDD partition mode
+# Test 18: HDD partition mode
 # ============================================================
-echo "=== Test 19: HDD partition mode (--hdd 10) ==="
+echo "=== Test 18: HDD partition mode (--hdd 10) ==="
 LOOP2=""
 DISKIMG2="${TESTDIR}/disk_hdd.img"
 truncate -s 3G "$DISKIMG2"
 LOOP2=$(losetup --find --show --partscan "$DISKIMG2")
 echo "HDD loop device: $LOOP2"
 
-printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 --hdd 20 "$LOOP2" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test19.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 --hdd 20 "$LOOP2" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test18.log" ||
 	fail "HDD mode benchmark failed"
 
-assert_output "HDD begin location" "${TESTDIR}/test19.log" "begin"
-assert_output "HDD end location" "${TESTDIR}/test19.log" "end"
-assert_output "interpolated results" "${TESTDIR}/test19.log" "Interpolated Results"
-assert_output "HDD interpolated data rows" "${TESTDIR}/test19.log" "interpolated  zstd:1"
-assert_output "HDD has RdCPU in results" "${TESTDIR}/test19.log" "RdCPU"
-assert_output "HDD best results has interpolated" "${TESTDIR}/test19.log" "interpolated:"
+assert_output "HDD begin location" "${TESTDIR}/test18.log" "begin"
+assert_output "HDD end location" "${TESTDIR}/test18.log" "end"
+assert_output "interpolated results" "${TESTDIR}/test18.log" "Interpolated Results"
+assert_output "HDD interpolated data rows" "${TESTDIR}/test18.log" "interpolated  zstd:1"
+assert_output "HDD has RdCPU in results" "${TESTDIR}/test18.log" "RdCPU"
+assert_output "HDD best results has interpolated" "${TESTDIR}/test18.log" "interpolated:"
 
 if [ -n "$LOOP2" ]; then
 	losetup -d "$LOOP2" 2>/dev/null || true
 fi
+
+# ============================================================
+# Test 19: --hdd fit rejection (percentage too large for the disk)
+# ============================================================
+echo "=== Test 19: --hdd fit rejection ==="
+DISKIMG4="${TESTDIR}/disk_hdd_small.img"
+truncate -s 200M "$DISKIMG4"
+LOOP4=$(losetup --find --show --partscan "$DISKIMG4")
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 --hdd 50 "$LOOP4" "$ARCHIVE" >"${TESTDIR}/test19.log" 2>&1 && rc=0 || rc=$?
+if [ "$rc" -eq 1 ]; then
+	pass "--hdd 50 on a 200M disk rejected (exit 1)"
+else
+	fail "--hdd fit rejection — expected exit 1, got $rc"
+fi
+assert_output "fit error message" "${TESTDIR}/test19.log" "does not fit"
+assert_not_output "rejected before partitioning" "${TESTDIR}/test19.log" "Creating partitions"
+if [ -b "${LOOP4}p1" ]; then
+	fail "partition was created despite fit rejection"
+else
+	pass "no partition created before rejection"
+fi
+losetup -d "$LOOP4" 2>/dev/null || true
 
 # ============================================================
 # Test 20: Test count displayed correctly
@@ -471,19 +502,37 @@ assert_output "warning before abort" "${TESTDIR}/test22.log" "WARNING"
 assert_output "disk info shown before prompt" "${TESTDIR}/test22.log" "Disk:"
 
 # ============================================================
-# Test 23: Force mode (none, explicit)
+# Test 23: SIGINT at a confirmation prompt
 # ============================================================
-echo "=== Test 23: Force mode (none, zstd:1 only) ==="
-printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f none "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test23.log" ||
+echo "=== Test 23: SIGINT at confirmation prompt ==="
+sleep 30 | "$COMPBENCH" --zstd 1-1 "$LOOP" "$ARCHIVE" >"${TESTDIR}/test23.log" 2>&1 &
+CBPID=$!
+for _ in $(seq 1 50); do
+	grep -q "Do you confirm" "${TESTDIR}/test23.log" 2>/dev/null && break
+	sleep 0.2
+done
+kill -INT $CBPID 2>/dev/null || true
+wait $CBPID 2>/dev/null && CBRC=0 || CBRC=$?
+if [ "$CBRC" -eq 1 ] && grep -q "Interrupted" "${TESTDIR}/test23.log"; then
+	pass "SIGINT at prompt handled (Interrupted, exit 1)"
+else
+	fail "SIGINT at prompt — exit $CBRC, Interrupted message missing"
+fi
+
+# ============================================================
+# Test 24: Force mode (none, explicit)
+# ============================================================
+echo "=== Test 24: Force mode (none, zstd:1 only) ==="
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f none "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test24.log" ||
 	fail "force=none benchmark failed"
 
-assert_output "standard variant with -f none" "${TESTDIR}/test23.log" "standard"
-assert_not_output "no force variant with -f none" "${TESTDIR}/test23.log" " force "
+assert_output "standard variant with -f none" "${TESTDIR}/test24.log" "standard"
+assert_not_output "no force variant with -f none" "${TESTDIR}/test24.log" " force "
 
 # ============================================================
-# Test 24: CSV read metric values
+# Test 25: CSV read metric values
 # ============================================================
-echo "=== Test 24: CSV read metric values ==="
+echo "=== Test 25: CSV read metric values ==="
 CSV_DATA=$(grep "zstd:1" "${TESTDIR}/results.csv" | head -1)
 if [ -n "$CSV_DATA" ]; then
 	READ_COL=$(echo "$CSV_DATA" | cut -d',' -f4)
@@ -509,25 +558,25 @@ else
 fi
 
 # ============================================================
-# Test 25: All tests fail (read-only device) → exit 1
+# Test 26: All tests fail (read-only device) → exit 1
 # ============================================================
-echo "=== Test 25: All tests fail on read-only device ==="
+echo "=== Test 26: All tests fail on read-only device ==="
 DISKIMG3="${TESTDIR}/disk_ro.img"
 truncate -s 64M "$DISKIMG3"
 LOOP3=$(losetup --find --show --read-only "$DISKIMG3")
-printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 "$LOOP3" "$ARCHIVE" >"${TESTDIR}/test25.log" 2>&1 && rc=0 || rc=$?
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 "$LOOP3" "$ARCHIVE" >"${TESTDIR}/test26.log" 2>&1 && rc=0 || rc=$?
 if [ "$rc" -eq 1 ]; then
 	pass "all-tests-failed run exits 1"
 else
 	fail "all-tests-failed run — expected exit 1, got $rc"
 fi
-assert_output "no-results message" "${TESTDIR}/test25.log" "No results collected"
+assert_output "no-results message" "${TESTDIR}/test26.log" "No results collected"
 losetup -d "$LOOP3" 2>/dev/null || true
 
 # ============================================================
-# Test 26: Cleanup verification (must be last)
+# Test 27: Cleanup verification (must be last)
 # ============================================================
-echo "=== Test 26: Cleanup verification ==="
+echo "=== Test 27: Cleanup verification ==="
 if grep -q "/tmp/compbench\." /proc/mounts; then
 	fail "stale compbench mounts remain:"
 	grep "/tmp/compbench\." /proc/mounts >&2

@@ -1,5 +1,5 @@
 CC      ?= gcc
-CFLAGS  ?= -Wall -Wextra -Werror -O2
+CFLAGS  ?= -Wall -Wextra -Werror -O2 -fstack-protector-strong
 # DEFS is separate from CFLAGS so a command-line or environment CFLAGS
 # override (make CFLAGS=..., dpkg-buildflags) cannot drop LFS support.
 DEFS     = -D_FILE_OFFSET_BITS=64
@@ -11,9 +11,12 @@ DESTDIR ?=
 PROG = compbench
 MAN  = $(PROG).1
 
-.PHONY: all clean install uninstall
+.PHONY: all clean install uninstall test
 
 all: $(PROG)
+
+test: $(PROG)
+	sudo bash test.sh
 
 $(PROG): compbench.c
 	$(CC) $(CFLAGS) $(DEFS) -o $@ $< $(LDFLAGS) $(LDLIBS)

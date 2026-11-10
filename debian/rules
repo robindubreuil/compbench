@@ -13,7 +13,7 @@ LDFLAGS := $(shell dpkg-buildflags --get LDFLAGS)
 	dh $@
 
 override_dh_auto_build:
-	$(MAKE) CFLAGS="$(CFLAGS) -Wall -Wextra" LDFLAGS="$(LDFLAGS)"
+	dh_auto_build -- CFLAGS="$(CFLAGS) -Wall -Wextra" LDFLAGS="$(LDFLAGS)"
 
 override_dh_auto_install:
 	$(MAKE) install DESTDIR=debian/compbench PREFIX=/usr

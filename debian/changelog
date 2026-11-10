@@ -1,3 +1,17 @@
+compbench (2.5) UNRELEASED; urgency=medium
+
+  * debian/rules: build through dh_auto_build so debhelper can pass
+    the cross toolchain when dpkg-buildpackage is invoked with -a
+    (e.g. -ai386). The previous direct $(MAKE) call dropped CC= and
+    silently produced a native amd64 binary inside an i386 package.
+  * CI: build the i386 package by cross-compilation on the native
+    amd64 baseline instead of QEMU; qemu-user's i386 emulation has a
+    broken UDP/DNS path on current GitHub runner images (deterministic
+    "Temporary failure resolving" for apt inside the emulated
+    container, while the ARM legs resolve fine).
+
+ -- Robin DUBREUIL <robin@dubreuil.pro>  Tue, 10 Nov 2026 23:55:00 +0100
+
 compbench (2.4) unstable; urgency=medium
 
   * Fix a 32-bit overflow in the total test count: a crafted --repeat

@@ -67,8 +67,6 @@ jobs:
         include:
           - debarch: amd64
             platform: linux/amd64
-          - debarch: i386
-            platform: linux/386
           - debarch: arm64
             platform: linux/arm64
           - debarch: armhf
@@ -90,15 +88,13 @@ jobs:
       # trixie = current stable, matching debian/changelog's
       # Standards-Version 4.7.2-era policy; bookworm publishes no
       # linux/arm/v5 image, so armel cannot build there at all.
+      # (i386 is not here: qemu-user's i386 emulation has a broken
+      # UDP/DNS path on current runner images — it is cross-built
+      # natively in the build-i386 job below.)
       - name: Build Debian Package (${{ matrix.debarch }})
         run: |
-          # qemu-user/i386 (socketcall) can mangle glibc's parallel
-          # A/AAAA DNS batch: force sequential lookups, and bypass the
-          # runner's own resolver. Harmless for the other arches.
-          printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\noptions single-request\n' > /tmp/resolv.ci.conf
           docker run --rm --platform ${{ matrix.platform }} \
             -v "$PWD:/src" -w /src \
-            -v /tmp/resolv.ci.conf:/etc/resolv.conf \
             debian:trixie \
             bash -c '
               set -e
@@ -120,6 +116,43 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: compbench-deb-${{ matrix.debarch }}
+          path: compbench_*.deb
+
+  # i386 without QEMU: qemu-user's i386 emulation (the only socketcall
+  # user in the set) has a broken UDP path on current runner images —
+  # every DNS query from the emulated container fails deterministically,
+  # while the ARM legs resolve fine. Cross-compile instead on the native
+  # amd64 baseline: same trixie toolchain, no emulation to regress.
+  # debhelper prefixes the cross toolchain automatically and the
+  # Makefile's "CC ?= gcc" lets it through.
+  build-i386:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Build Debian Package (i386, cross-compiled)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src \
+            debian:trixie \
+            bash -c '
+              set -e
+              n=0
+              until apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=5 update; do
+                n=$((n+1))
+                if [ "$n" -ge 3 ]; then exit 1; fi
+                sleep 5
+              done
+              apt-get install -y -o Acquire::Retries=5 dpkg-dev debhelper build-essential fakeroot gcc make crossbuild-essential-i386
+              dpkg-buildpackage -us -uc -ai386
+              mv ../compbench_*.deb ./
+            '
+
+      - name: Upload Debian Package Artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: compbench-deb-i386
           path: compbench_*.deb
 
   # Lint the package produced by the same baseline image as the build

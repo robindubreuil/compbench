@@ -92,8 +92,13 @@ jobs:
       # linux/arm/v5 image, so armel cannot build there at all.
       - name: Build Debian Package (${{ matrix.debarch }})
         run: |
+          # qemu-user/i386 (socketcall) can mangle glibc's parallel
+          # A/AAAA DNS batch: force sequential lookups, and bypass the
+          # runner's own resolver. Harmless for the other arches.
+          printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\noptions single-request\n' > /tmp/resolv.ci.conf
           docker run --rm --platform ${{ matrix.platform }} \
             -v "$PWD:/src" -w /src \
+            -v /tmp/resolv.ci.conf:/etc/resolv.conf \
             debian:trixie \
             bash -c '
               set -e

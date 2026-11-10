@@ -87,18 +87,29 @@ jobs:
 
       # All architectures build on the same Debian baseline so the
       # produced packages share one toolchain and hardening set.
+      # trixie = current stable, matching debian/changelog's
+      # Standards-Version 4.7.2-era policy; bookworm publishes no
+      # linux/arm/v5 image, so armel cannot build there at all.
       - name: Build Debian Package (${{ matrix.debarch }})
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
             -v "$PWD:/src" -w /src \
-            debian:bookworm \
-            bash -c "
+            debian:trixie \
+            bash -c '
               set -e
-              apt-get update
-              apt-get install -y dpkg-dev debhelper build-essential fakeroot gcc make
+              # Emulated containers sometimes hit transient DNS failures
+              # on hosted runners, and apt-get update exits 0 on partial
+              # errors by default — hard-fail and retry instead.
+              n=0
+              until apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=5 update; do
+                n=$((n+1))
+                if [ "$n" -ge 3 ]; then exit 1; fi
+                sleep 5
+              done
+              apt-get install -y -o Acquire::Retries=5 dpkg-dev debhelper build-essential fakeroot gcc make
               dpkg-buildpackage -us -uc
               mv ../compbench_*.deb ./
-            "
+            '
 
       - name: Upload Debian Package Artifact
         uses: actions/upload-artifact@v5
@@ -107,8 +118,10 @@ jobs:
           path: compbench_*.deb
 
   # Lint the package produced by the same baseline image as the build
-  # matrix. dpkg-buildpackage writes its artifacts one level above the
-  # source tree (= / inside the container).
+  # matrix (trixie's lintian knows Standards-Version 4.7.2; bookworm's
+  # caps at 4.6.2 and fails on the newer-standards-version warning).
+  # dpkg-buildpackage writes its artifacts one level above the source
+  # tree (= / inside the container).
   lintian:
     runs-on: ubuntu-latest
 
@@ -119,11 +132,16 @@ jobs:
       - name: Build Package and Run Lintian
         run: |
           docker run --rm -v "$PWD:/src" -w /src \
-            debian:bookworm \
-            bash -c "
+            debian:trixie \
+            bash -c '
               set -e
-              apt-get update
-              apt-get install -y dpkg-dev debhelper build-essential fakeroot gcc make lintian
+              n=0
+              until apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=5 update; do
+                n=$((n+1))
+                if [ "$n" -ge 3 ]; then exit 1; fi
+                sleep 5
+              done
+              apt-get install -y -o Acquire::Retries=5 dpkg-dev debhelper build-essential fakeroot gcc make lintian
               dpkg-buildpackage -us -uc
               lintian --fail-on error,warning /compbench_*.changes
-            "
+            '

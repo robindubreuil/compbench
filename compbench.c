@@ -40,7 +40,19 @@
 #define MAX_RESULTS 4096
 #define BUF_SIZE (1 << 20)
 
-enum force_mode { FORCE_NONE, FORCE_ZSTD, FORCE_LZO, FORCE_ALL, FORCE_BOTH };
+/* -f MODE selects which mount option variant(s) each algorithm runs:
+ *   FORCE_NONE          compress= only
+ *   FORCE_ZSTD          compress-force= for zstd, compress= otherwise
+ *   FORCE_LZO           compress-force= for lzo, compress= otherwise
+ *   FORCE_ALL_ALGOS     compress-force= for every algorithm
+ *   FORCE_ALL_VARIANTS  each test twice: compress= and compress-force= */
+enum force_mode {
+	FORCE_NONE,
+	FORCE_ZSTD,
+	FORCE_LZO,
+	FORCE_ALL_ALGOS,
+	FORCE_ALL_VARIANTS,
+};
 
 struct config {
 	const char *device;
@@ -85,7 +97,6 @@ struct state {
 	unsigned long long archive_size;
 	int tmpfs_mounted;
 	int dev_mounted;
-	int partitions_created;
 };
 
 static struct config g_cfg = {
@@ -99,6 +110,7 @@ static struct config g_cfg = {
 static struct state g_st;
 static struct result g_results[MAX_RESULTS];
 static int g_nresults;
+static int g_failed_tests;
 static volatile sig_atomic_t g_signaled;
 
 static void		die(const char *, ...) __attribute__((noreturn, format(printf, 1, 2)));
@@ -155,6 +167,15 @@ status(const char *fmt, ...)
 	fflush(stdout);
 }
 
+/* User declined a confirmation prompt: uniform message and exit status. */
+static void
+user_abort(void)
+{
+	msg("Aborted.\n");
+	cleanup();
+	_exit(1);
+}
+
 /* Returns pointer to static buffer; safe for single-threaded use only. */
 static const char *
 bytes_human(unsigned long long bytes)
@@ -164,6 +185,8 @@ bytes_human(unsigned long long bytes)
 		snprintf(buf, sizeof(buf), "%lluG", bytes >> 30);
 	else if (bytes >= (1ULL << 20))
 		snprintf(buf, sizeof(buf), "%lluM", bytes >> 20);
+	else if (bytes >= (1ULL << 10))
+		snprintf(buf, sizeof(buf), "%lluK", bytes >> 10);
 	else
 		snprintf(buf, sizeof(buf), "%lluB", bytes);
 	return buf;
@@ -392,6 +415,9 @@ copy_single_file(const char *src, const char *dst, mode_t mode)
 		close(sfd);
 		return -1;
 	}
+	/* open() applies the process umask to the new file; restore the
+	 * exact source permission bits (group/other write, setuid, ...). */
+	fchmod(dfd, mode & 07777);
 
 	struct stat st;
 	if (fstat(sfd, &st) < 0) {
@@ -485,7 +511,7 @@ copy_tree(const char *src, const char *dst)
 		if (S_ISDIR(st.st_mode)) {
 			rc = copy_tree(sp, dp);
 			if (rc == 0)
-				chmod(dp, st.st_mode);
+				chmod(dp, st.st_mode & 07777);
 		} else if (S_ISREG(st.st_mode)) {
 			rc = copy_single_file(sp, dp, st.st_mode);
 		} else if (S_ISLNK(st.st_mode)) {
@@ -584,6 +610,8 @@ tree_size(const char *path)
 			total += tree_size(fp);
 		else if (S_ISREG(st.st_mode))
 			total += st.st_size;
+		/* Symlinks count by target-string length (as du does);
+		 * btrfs stores them inline but they consume a few bytes. */
 		else if (S_ISLNK(st.st_mode))
 			total += st.st_size;
 	}
@@ -595,19 +623,48 @@ tree_size(const char *path)
 /* Cleanup                                                            */
 /* ------------------------------------------------------------------ */
 
+/* Unmount a filesystem, falling back to a lazy detach so that a busy
+ * mount can never make cleanup delete through it. Returns 0 if the path
+ * is no longer mounted, -1 if it is still attached. */
+static int
+unmount_safe(const char *path)
+{
+	if (umount(path) == 0)
+		return 0;
+	if (umount2(path, MNT_DETACH) == 0)
+		return 0;
+	return -1;
+}
+
 static void
 cleanup(void)
 {
+	int safe = 1;
+
 	if (g_st.dev_mounted) {
-		umount(g_st.mnt);
+		if (unmount_safe(g_st.mnt) < 0) {
+			msg("warning: cannot unmount %s: %s\n",
+			    g_st.mnt, strerror(errno));
+			safe = 0;
+		}
 		g_st.dev_mounted = 0;
 	}
 	if (g_st.tmpfs_mounted) {
-		umount(g_st.tmpfs);
+		if (unmount_safe(g_st.tmpfs) < 0) {
+			msg("warning: cannot unmount %s: %s\n",
+			    g_st.tmpfs, strerror(errno));
+			safe = 0;
+		}
 		g_st.tmpfs_mounted = 0;
 	}
 	if (g_st.tmpdir[0]) {
-		run_cmd("/bin/rm", "-rf", g_st.tmpdir, NULL);
+		/* Never rm -rf through a still-mounted filesystem: if a
+		 * mount refused to detach, leave the tree in place. */
+		if (safe)
+			run_cmd("/bin/rm", "-rf", g_st.tmpdir, NULL);
+		else
+			msg("warning: leaving %s in place (still mounted)\n",
+			    g_st.tmpdir);
 		g_st.tmpdir[0] = '\0';
 	}
 }
@@ -732,7 +789,7 @@ download_archive(const char *url, const char *dest)
 {
 	status("Downloading archive...\n");
 	verbose("Downloading %s -> %s\n", url, dest);
-	if (run_cmd("curl", "-L", "-sS", "-o", dest, url, NULL) != 0)
+	if (run_cmd("curl", "-L", "-sS", "--fail", "-o", dest, url, NULL) != 0)
 		die("download failed");
 	verbose("Download complete.\n");
 }
@@ -776,8 +833,8 @@ force_mode_name(enum force_mode f)
 	case FORCE_NONE: return "none";
 	case FORCE_ZSTD: return "zstd";
 	case FORCE_LZO:  return "lzo";
-	case FORCE_ALL:  return "all";
-	case FORCE_BOTH: return "both";
+	case FORCE_ALL_ALGOS: return "all";
+	case FORCE_ALL_VARIANTS: return "both";
 	}
 	return "unknown";
 }
@@ -810,10 +867,10 @@ get_force_variants(const char *algo, enum force_mode force,
 		else
 			*do_standard = 1;
 		break;
-	case FORCE_ALL:
+	case FORCE_ALL_ALGOS:
 		*do_force = 1;
 		break;
-	case FORCE_BOTH:
+	case FORCE_ALL_VARIANTS:
 		*do_standard = 1;
 		*do_force = 1;
 		break;
@@ -872,8 +929,11 @@ run_single_test(const char *device, const char *location,
 
 	if (copy_tree(g_st.tmpfs, g_st.mnt) < 0) {
 		msg("warning: copy failed for %s\n", target);
-		umount(g_st.mnt);
-		g_st.dev_mounted = 0;
+		if (unmount_safe(g_st.mnt) < 0)
+			msg("warning: cannot unmount %s: %s\n",
+			    g_st.mnt, strerror(errno));
+		else
+			g_st.dev_mounted = 0;
 		return -1;
 	}
 
@@ -920,7 +980,13 @@ run_single_test(const char *device, const char *location,
 	out->disk_bytes      = disk_bytes;
 	out->disk_rate_sync_mib = elapsed_sync > 0 ? (double)disk_bytes / elapsed_sync / (1024.0 * 1024.0) : 0;
 
-	umount(g_st.mnt);
+	/* On unmount failure leave dev_mounted set: cleanup retries and,
+	 * if still busy, refuses to delete the temp tree. */
+	if (unmount_safe(g_st.mnt) < 0) {
+		msg("warning: cannot unmount %s: %s\n",
+		    g_st.mnt, strerror(errno));
+		return -1;
+	}
 	g_st.dev_mounted = 0;
 
 	verbose("Unmounted, remounting for read test...\n");
@@ -966,10 +1032,17 @@ run_single_test(const char *device, const char *location,
 				? (double)out->read_disk_bytes / rd_elapsed
 				  / (1024.0 * 1024.0)
 				: 0;
+		} else {
+			msg("warning: read-back failed for %s; "
+			    "read metrics unavailable\n", target);
 		}
 	}
 
-	umount(g_st.mnt);
+	if (unmount_safe(g_st.mnt) < 0) {
+		msg("warning: cannot unmount %s: %s\n",
+		    g_st.mnt, strerror(errno));
+		return -1;
+	}
 	g_st.dev_mounted = 0;
 
 	return 0;
@@ -983,13 +1056,16 @@ run_single_test(const char *device, const char *location,
 static const char *const g_simple_algos[] = { "lzo", "zlib" };
 #define N_SIMPLE_ALGOS ((int)(sizeof(g_simple_algos) / sizeof(g_simple_algos[0])))
 
+/* Total number of tests the configuration requests. main() rejects
+ * configurations exceeding MAX_RESULTS up front, so g_results can never
+ * overflow (g_nresults grows at most once per planned test). */
 static int
 total_test_count(const struct config *cfg)
 {
 	int zstd_n = cfg->zstd_max - cfg->zstd_min + 1;
 	int simple = N_SIMPLE_ALGOS;
 	int per_loc;
-	if (cfg->force == FORCE_BOTH)
+	if (cfg->force == FORCE_ALL_VARIANTS)
 		per_loc = 2 * zstd_n + 2 * simple + 1;
 	else
 		per_loc = zstd_n + simple + 1;
@@ -1002,7 +1078,8 @@ total_test_count(const struct config *cfg)
 /* ------------------------------------------------------------------ */
 
 /* Run all force-variants and repeats for one target. Every attempted
- * test advances progress (for ETA accuracy); only successes are stored. */
+ * test advances progress (for ETA accuracy); successes are stored,
+ * failures are counted and reported at the end of the run. */
 static void
 run_target(const struct config *cfg, const char *device, const char *location,
 	   const char *algo, const char *target,
@@ -1031,9 +1108,9 @@ run_target(const struct config *cfg, const char *device, const char *location,
 			if (run_single_test(device, location, target, v,
 					    g_st.data_size, res) == 0)
 				g_nresults++;
+			else
+				g_failed_tests++;
 			(*tests_done)++;
-			if (g_nresults >= MAX_RESULTS)
-				return;
 		}
 	}
 }
@@ -1063,7 +1140,7 @@ run_all_tests(const struct config *cfg)
 			run_target(cfg, devices[loc], locations[loc],
 				   "zstd", target, &test_num, &tests_done,
 				   total, &overall_start);
-			if (g_signaled || g_nresults >= MAX_RESULTS) {
+			if (g_signaled) {
 				status("\n");
 				return;
 			}
@@ -1073,7 +1150,7 @@ run_all_tests(const struct config *cfg)
 			run_target(cfg, devices[loc], locations[loc],
 				   g_simple_algos[a], g_simple_algos[a],
 				   &test_num, &tests_done, total, &overall_start);
-			if (g_signaled || g_nresults >= MAX_RESULTS) {
+			if (g_signaled) {
 				status("\n");
 				return;
 			}
@@ -1082,7 +1159,7 @@ run_all_tests(const struct config *cfg)
 		run_target(cfg, devices[loc], locations[loc],
 			   "none", "none", &test_num, &tests_done,
 			   total, &overall_start);
-		if (g_signaled || g_nresults >= MAX_RESULTS) {
+		if (g_signaled) {
 			status("\n");
 			return;
 		}
@@ -1151,7 +1228,8 @@ compute_averages(struct avg *avgs, int max_avgs)
 		unsigned long long sum_read_disk = 0;
 		double sum_elapsed_sync = 0;
 		unsigned long long sum_compressed = 0, sum_disk = 0;
-		double sq_rate_sync = 0, sq_read_rate = 0;
+		/* Welford running accumulators for write/read rate stdev */
+		double m_wr = 0, s_wr = 0, m_rd = 0, s_rd = 0;
 		int sec_red_count = 0;
 
 		for (int j = i; j < g_nresults; j++) {
@@ -1172,10 +1250,18 @@ compute_averages(struct avg *avgs, int max_avgs)
 			sum_read_cpu      += g_results[j].read_cpu_pct;
 			sum_read_disk     += g_results[j].read_disk_bytes;
 			sum_read_disk_rate += g_results[j].read_disk_rate_mib;
-			sq_rate_sync      += g_results[j].rate_sync_mib
-					   * g_results[j].rate_sync_mib;
-			sq_read_rate      += g_results[j].read_rate_mib
-					   * g_results[j].read_rate_mib;
+			{
+				double x = g_results[j].rate_sync_mib;
+				double d = x - m_wr;
+				m_wr += d / count;
+				s_wr += d * (x - m_wr);
+			}
+			{
+				double x = g_results[j].read_rate_mib;
+				double d = x - m_rd;
+				m_rd += d / count;
+				s_rd += d * (x - m_rd);
+			}
 			if (isfinite(g_results[j].sec_per_reduction)) {
 				sum_sec_red += g_results[j].sec_per_reduction;
 				sec_red_count++;
@@ -1197,8 +1283,8 @@ compute_averages(struct avg *avgs, int max_avgs)
 		a->read_disk_bytes    = sum_read_disk / count;
 		a->read_disk_rate_mib = sum_read_disk_rate / count;
 		/* population standard deviation; 0 when count == 1 */
-		double var_wr = sq_rate_sync / count - a->rate_sync_mib * a->rate_sync_mib;
-		double var_rd = sq_read_rate / count - a->read_rate_mib * a->read_rate_mib;
+		double var_wr = s_wr / count;
+		double var_rd = s_rd / count;
 		a->rate_sync_stdev = var_wr > 0 ? sqrt(var_wr) : 0;
 		a->read_rate_stdev = var_rd > 0 ? sqrt(var_rd) : 0;
 		a->count = count;
@@ -1430,7 +1516,7 @@ print_best(struct avg *avgs, int navg)
 static void
 print_comparison(struct avg *avgs, int navg)
 {
-	if (g_cfg.force != FORCE_BOTH)
+	if (g_cfg.force != FORCE_ALL_VARIANTS)
 		return;
 
 	msg("\nForce vs Standard Comparison (percentage differences):\n");
@@ -1566,8 +1652,8 @@ parse_force(const char *s)
 	if (strcmp(s, "none") == 0) return FORCE_NONE;
 	if (strcmp(s, "zstd") == 0) return FORCE_ZSTD;
 	if (strcmp(s, "lzo") == 0)  return FORCE_LZO;
-	if (strcmp(s, "all") == 0)  return FORCE_ALL;
-	if (strcmp(s, "both") == 0) return FORCE_BOTH;
+	if (strcmp(s, "all") == 0)  return FORCE_ALL_ALGOS;
+	if (strcmp(s, "both") == 0) return FORCE_ALL_VARIANTS;
 	die("invalid force mode: %s (none, zstd, lzo, all, both)", s);
 	return FORCE_NONE;
 }
@@ -1718,8 +1804,19 @@ main(int argc, char **argv)
 	g_cfg.device  = argv[optind];
 	g_cfg.archive = argv[optind + 1];
 
+	int total = total_test_count(&g_cfg);
+	if (total > MAX_RESULTS)
+		die("configuration requests %d tests, maximum is %d "
+		    "(lower --repeat or narrow --zstd)", total, MAX_RESULTS);
+
 	if (geteuid() != 0)
 		die("this tool must be run as root");
+
+	struct stat dev_st;
+	if (stat(g_cfg.device, &dev_st) < 0)
+		die("cannot access %s: %s", g_cfg.device, strerror(errno));
+	if (!S_ISBLK(dev_st.st_mode))
+		die("%s is not a block device", g_cfg.device);
 
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
@@ -1729,17 +1826,17 @@ main(int argc, char **argv)
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
 
+	print_disk_info(g_cfg.device);
+
 	msg("WARNING: All data on %s will be erased!\n", g_cfg.device);
 	msg("Do you confirm? (yes/no): ");
 	fflush(stdout);
 	char confirm[16];
-	if (!fgets(confirm, sizeof(confirm), stdin)
-	    || strcmp(confirm, "yes\n") != 0) {
-		msg("Aborted.\n");
-		return 0;
-	}
-
-	print_disk_info(g_cfg.device);
+	if (!fgets(confirm, sizeof(confirm), stdin))
+		user_abort();
+	confirm[strcspn(confirm, "\r\n")] = '\0';
+	if (strcmp(confirm, "yes") != 0)
+		user_abort();
 
 	snprintf(g_st.tmpdir, sizeof(g_st.tmpdir),
 		 "/tmp/compbench.%d", getpid());
@@ -1782,10 +1879,9 @@ main(int argc, char **argv)
 		char answer[8];
 		if (!fgets(answer, sizeof(answer), stdin)
 		    || (answer[0] != 'y' && answer[0] != 'Y'))
-			die("aborted");
+			user_abort();
 	}
 
-	int total = total_test_count(&g_cfg);
 	msg("\nThis benchmark will run %d tests on %s.\n",
 	    total, g_cfg.device);
 	msg("Continue? (y/n): ");
@@ -1793,7 +1889,7 @@ main(int argc, char **argv)
 	char answer[8];
 	if (!fgets(answer, sizeof(answer), stdin)
 	    || (answer[0] != 'y' && answer[0] != 'Y'))
-		die("aborted");
+		user_abort();
 
 	if (g_cfg.hdd_percent > 0) {
 		unsigned long long disk_size = get_disk_size(g_cfg.device);
@@ -1824,7 +1920,6 @@ main(int argc, char **argv)
 		    wait_for_block_dev(g_st.part2, 5000) < 0)
 			die("partitions did not appear: %s, %s",
 			    g_st.part1, g_st.part2);
-		g_st.partitions_created = 1;
 		verbose("Partitions: %s (begin) and %s (end)\n",
 			g_st.part1, g_st.part2);
 	} else {
@@ -1856,12 +1951,8 @@ main(int argc, char **argv)
 		: 0;
 	msg("Archive compression factor: %.2f\n", compression_factor);
 
-	{
-		unsigned long long total_written = g_st.data_size
-			* (unsigned long long)total_test_count(&g_cfg);
-		msg("Estimated total data written: %s across %d tests.\n",
-		    bytes_human(total_written), total_test_count(&g_cfg));
-	}
+	msg("Estimated total data written: %s across %d tests.\n",
+	    bytes_human(g_st.data_size * (unsigned long long)total), total);
 
 	msg("\n");
 	run_all_tests(&g_cfg);
@@ -1871,6 +1962,17 @@ main(int argc, char **argv)
 		cleanup();
 		return 1;
 	}
+
+	if (g_nresults == 0) {
+		msg("\nNo results collected: all %d tests failed.\n",
+		    g_failed_tests);
+		cleanup();
+		return 1;
+	}
+	if (g_failed_tests > 0)
+		msg("\nWarning: %d of %d tests failed and are excluded "
+		    "from the results.\n",
+		    g_failed_tests, g_nresults + g_failed_tests);
 
 	static struct avg avgs[MAX_RESULTS];
 	int navg = compute_averages(avgs, MAX_RESULTS);
@@ -1904,5 +2006,5 @@ main(int argc, char **argv)
 	export_csv(avgs, navg);
 
 	cleanup();
-	return 0;
+	return g_failed_tests > 0 ? 1 : 0;
 }

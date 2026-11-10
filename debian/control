@@ -1,8 +1,8 @@
 Source: compbench
 Section: utils
 Priority: optional
-Maintainer: Robin DUBREUIL <63008968+robindubreuil@users.noreply.github.com>
-Build-Depends: debhelper-compat (= 13), gcc, make
+Maintainer: Robin DUBREUIL <robin@dubreuil.pro>
+Build-Depends: debhelper-compat (= 13)
 Standards-Version: 4.6.2
 Homepage: https://github.com/Robin-DUBREUIL/compbench/
 
@@ -10,6 +10,6 @@ Package: compbench
 Architecture: any
 Depends: ${misc:Depends}, ${shlibs:Depends}, btrfs-progs, xz-utils, gdisk, curl
 Description: Btrfs transparent compression benchmark
- Benchmarks Btrfs compression algorithms (zstd, lzo) by measuring read/write
- throughput, compression ratio, CPU usage, and disk I/O using direct
- kernel interfaces. No text parsing of external tool output.
+ Benchmarks Btrfs compression algorithms (zstd, lzo, zlib) by measuring
+ read/write throughput, compression ratio, CPU usage, and disk I/O using
+ direct kernel interfaces. No text parsing of external tool output.

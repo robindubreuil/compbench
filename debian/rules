@@ -2,11 +2,18 @@
 
 export DH_VERBOSE = 1
 
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# Build with the full set of distro compiler/linker flags (hardening,
+# -O2, LFS) instead of overriding them with a fixed string.
+CFLAGS  := $(shell dpkg-buildflags --get CFLAGS) $(shell dpkg-buildflags --get CPPFLAGS)
+LDFLAGS := $(shell dpkg-buildflags --get LDFLAGS)
+
 %:
 	dh $@
 
 override_dh_auto_build:
-	$(MAKE) CFLAGS="-Wall -Wextra -O2 -D_FILE_OFFSET_BITS=64"
+	$(MAKE) CFLAGS="$(CFLAGS) -Wall -Wextra" LDFLAGS="$(LDFLAGS)"
 
 override_dh_auto_install:
 	$(MAKE) install DESTDIR=debian/compbench PREFIX=/usr

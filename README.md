@@ -4,7 +4,7 @@
 
 # An exhaustive benchmark for Btrfs transparent compression
 
-Compbench is a C tool that benchmarks Btrfs compression algorithms (zstd, lzo) by measuring read and write throughput, compression ratio, CPU usage, and disk I/O — all through direct kernel interfaces with zero text parsing of external tool output.
+Compbench is a C tool that benchmarks Btrfs compression algorithms (zstd, lzo, zlib) by measuring read and write throughput, compression ratio, CPU usage, and disk I/O — all through direct kernel interfaces with zero text parsing of external tool output.
 
 ## Features
 
@@ -40,6 +40,10 @@ The binary is dynamically linked against `libm` and `libc` only.
 ## Usage
 
 > **Warning:** This tool formats the target device, erasing all existing data.
+> The device is not restored after a run: it is left with the Btrfs filesystem
+> of the last test (`--hdd` additionally leaves a GPT table with two partitions).
+> Before writing anything, compbench prints the disk model and size and asks
+> for confirmation.
 
 ### Basic Command
 
@@ -105,6 +109,22 @@ All metrics use kernel interfaces directly:
 | WrCPU% | System CPU usage during write | `/proc/stat` |
 | RdCPU% | System CPU usage during read | `/proc/stat` |
 | Sec/Red | Seconds per 1% space reduction | Derived |
+
+### Measurement Caveats
+
+- **CPU usage is system-wide.** `WrCPU%`/`RdCPU%` come from `/proc/stat` across all cores and all processes — run compbench on an otherwise idle system for meaningful numbers.
+- **Ratio granularity.** The compression ratio is measured with `statvfs()`. Btrfs allocates space in chunks (and metadata globally), so small datasets can show quantized ratios — use a dataset that is large relative to the test filesystem.
+- **`sync()` is system-wide.** Synced write timings (`WrMiB/s`) include flushing any unrelated dirty data on the machine.
+- **Cold reads need a writable `/proc/sys/vm/drop_caches`.** When the page cache cannot be dropped (e.g. inside some containers), `RdMiB/s` may be inflated; compbench prints a warning.
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | All requested tests completed and succeeded |
+| `1` | Error (bad arguments, missing privileges, user abort, interrupt), or at least one test failed |
+
+Failed tests are excluded from the results and reported at the end; if every test fails, no results are produced.
 
 ## Installation (Debian Package)
 

@@ -5,7 +5,7 @@
 # This script creates virtual block devices (loop devices backed by sparse
 # files) so compbench can be tested without risking any real data.
 #
-# Requirements: root, losetup, btrfs-progs, mkfs.btrfs
+# Requirements: root, losetup, btrfs-progs, xz, tar, sgdisk, mountpoint
 #
 set -euo pipefail
 
@@ -97,6 +97,22 @@ command -v mkfs.btrfs >/dev/null 2>&1 || {
 	echo "FAIL: mkfs.btrfs not found" >&2
 	exit 1
 }
+command -v xz >/dev/null 2>&1 || {
+	echo "FAIL: xz not found" >&2
+	exit 1
+}
+command -v tar >/dev/null 2>&1 || {
+	echo "FAIL: tar not found" >&2
+	exit 1
+}
+command -v sgdisk >/dev/null 2>&1 || {
+	echo "FAIL: sgdisk not found" >&2
+	exit 1
+}
+command -v mountpoint >/dev/null 2>&1 || {
+	echo "FAIL: mountpoint not found" >&2
+	exit 1
+}
 
 modprobe loop 2>/dev/null || true
 
@@ -159,6 +175,9 @@ assert_exit "invalid force mode" 1 "$COMPBENCH" -f invalid /dev/loop0 foo.tar.xz
 assert_exit "repeat 0" 1 "$COMPBENCH" -n 0 /dev/loop0 foo.tar.xz
 assert_exit "hdd 0" 1 "$COMPBENCH" --hdd 0 /dev/loop0 foo.tar.xz
 assert_exit "hdd 60" 1 "$COMPBENCH" --hdd 60 /dev/loop0 foo.tar.xz
+assert_exit "too many tests rejected" 1 "$COMPBENCH" -n 1000 --zstd 1-15 -f both --hdd 50 /dev/loop0 foo.tar.xz
+assert_exit "device does not exist" 1 "$COMPBENCH" --zstd 1-1 /dev/nonexistent-compbench foo.tar.xz
+assert_exit "device is not a block device" 1 "$COMPBENCH" --zstd 1-1 /dev/null foo.tar.xz
 
 # ============================================================
 # Set up test environment for benchmark tests
@@ -353,23 +372,6 @@ assert_output "verbose RAM info" "${TESTDIR}/test15.log" "Available RAM:"
 assert_output "verbose extraction info" "${TESTDIR}/test15.log" "Extraction complete"
 
 # ============================================================
-# Test 16: Cleanup verification
-# ============================================================
-echo "=== Test 16: Cleanup verification ==="
-if mountpoint -q "${TESTDIR}" 2>/dev/null; then
-	fail "test directory is still a mount point"
-else
-	pass "no stale mounts"
-fi
-
-LEFTOVER=$(find /tmp -maxdepth 1 -name "compbench.*" -newer "$TESTDIR" 2>/dev/null | grep -v "$TESTDIR" || true)
-if [ -z "$LEFTOVER" ]; then
-	pass "no leftover temp directories"
-else
-	fail "leftover temp dirs: $LEFTOVER"
-fi
-
-# ============================================================
 # Test 17: CSV with force=both
 # ============================================================
 echo "=== Test 17: CSV with force=both ==="
@@ -458,9 +460,15 @@ fi
 # Test 22: User abort
 # ============================================================
 echo "=== Test 22: User abort ==="
-echo "no" | "$COMPBENCH" /dev/null /dev/null >"${TESTDIR}/test22.log" 2>&1
+echo "no" | "$COMPBENCH" "$LOOP" "$ARCHIVE" >"${TESTDIR}/test22.log" 2>&1 && rc=0 || rc=$?
+if [ "$rc" -eq 1 ]; then
+	pass "user abort exits 1"
+else
+	fail "user abort exit code — expected 1, got $rc"
+fi
 assert_output "abort message" "${TESTDIR}/test22.log" "Aborted"
 assert_output "warning before abort" "${TESTDIR}/test22.log" "WARNING"
+assert_output "disk info shown before prompt" "${TESTDIR}/test22.log" "Disk:"
 
 # ============================================================
 # Test 23: Force mode (none, explicit)
@@ -498,6 +506,40 @@ if [ -n "$CSV_DATA" ]; then
 	fi
 else
 	fail "CSV zstd:1 data row not found"
+fi
+
+# ============================================================
+# Test 25: All tests fail (read-only device) → exit 1
+# ============================================================
+echo "=== Test 25: All tests fail on read-only device ==="
+DISKIMG3="${TESTDIR}/disk_ro.img"
+truncate -s 64M "$DISKIMG3"
+LOOP3=$(losetup --find --show --read-only "$DISKIMG3")
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 "$LOOP3" "$ARCHIVE" >"${TESTDIR}/test25.log" 2>&1 && rc=0 || rc=$?
+if [ "$rc" -eq 1 ]; then
+	pass "all-tests-failed run exits 1"
+else
+	fail "all-tests-failed run — expected exit 1, got $rc"
+fi
+assert_output "no-results message" "${TESTDIR}/test25.log" "No results collected"
+losetup -d "$LOOP3" 2>/dev/null || true
+
+# ============================================================
+# Test 26: Cleanup verification (must be last)
+# ============================================================
+echo "=== Test 26: Cleanup verification ==="
+if grep -q "/tmp/compbench\." /proc/mounts; then
+	fail "stale compbench mounts remain:"
+	grep "/tmp/compbench\." /proc/mounts >&2
+else
+	pass "no stale compbench mounts"
+fi
+
+LEFTOVER=$(find /tmp -maxdepth 1 -name "compbench.*" -newer "$TESTDIR" 2>/dev/null | grep -v "$TESTDIR" || true)
+if [ -z "$LEFTOVER" ]; then
+	pass "no leftover temp directories"
+else
+	fail "leftover temp dirs: $LEFTOVER"
 fi
 
 # ============================================================

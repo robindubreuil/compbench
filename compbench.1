@@ -1,4 +1,4 @@
-.TH compbench 1 "June 2026" "compbench 2.3" "User Commands"
+.TH compbench 1 "November 2026" "compbench 2.3" "User Commands"
 .SH NAME
 compbench \- benchmark Btrfs transparent compression
 .SH SYNOPSIS
@@ -32,7 +32,17 @@ data copy via
 .SH WARNING
 .B This tool erases all data on DEVICE.
 It creates a fresh Btrfs filesystem on each test run. Double-check the
-device path before proceeding.
+device path before proceeding. Before anything is written, compbench
+prints the disk model and size and asks for confirmation (type
+.BR yes ).
+.SH "DISK STATE AFTER A RUN"
+The device is not restored after a run. Without
+.BR \-\-hdd ,
+DEVICE is left containing the Btrfs filesystem of the last test. With
+.BR \-\-hdd ,
+DEVICE is left with a GPT partition table and two partitions, each
+containing the Btrfs filesystem of its last test. The previous contents
+cannot be recovered.
 .SH ARGUMENTS
 .TP
 .B DEVICE
@@ -51,7 +61,8 @@ Repeat each test
 times and average the results (default: 1). When
 .I N
 > 1, the standard deviation of the write and read throughput is also
-reported in the CSV output.
+reported in the CSV output. The total number of tests (levels ×
+algorithms × variants × zones × repeats) may not exceed 4096.
 .TP
 .BR \-\-zstd = MIN\-MAX
 zstd compression level range
@@ -146,14 +157,41 @@ A
 .I "Best Results"
 summary highlights the fastest write, fastest read, best compressed, and
 best balanced target per disk zone.
+.SH NOTES
+For accurate results:
+.IP \(bu 2
+.I WrCPU% \ / \ RdCPU%
+are system-wide
+.I /proc/stat
+figures covering all processes; run compbench on an otherwise idle
+machine.
+.IP \(bu 2
+.I Ratio
+is derived from
+.BR statvfs (2)
+free space. Btrfs allocates space in chunks, so small datasets can
+show quantized ratios; use a dataset that is large relative to the
+test filesystem.
+.IP \(bu 2
+.B sync()
+is system-wide: synced write timings include writeback of unrelated
+dirty data on the machine.
+.IP \(bu 2
+Cold reads require a writable
+.IR /proc/sys/vm/drop_caches .
+When the page cache cannot be dropped (e.g. inside some containers),
+.I RdMiB/s
+is inflated; a warning is printed.
 .SH EXIT STATUS
 .TP
 .B 0
-success;
+all requested tests completed and succeeded;
 .TP
 .B 1
-error (invalid arguments, missing privileges, failed operation, or user
-abort).
+error (invalid arguments, missing privileges, user abort, interruption,
+or a failed operation), or at least one benchmark test failed. Failed
+tests are excluded from the results and a warning reports how many; if
+every test fails, no results are produced.
 .SH EXAMPLES
 .TP
 Basic run:

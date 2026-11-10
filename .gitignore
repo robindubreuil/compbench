@@ -3,6 +3,7 @@ compbench
 *.deb
 *.buildinfo
 *.changes
+.ruff_cache/
 debian/compbench/
 debian/.debhelper/
 debian/debhelper-build-stamp

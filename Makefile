@@ -1,7 +1,9 @@
 CC      ?= gcc
 CFLAGS  ?= -Wall -Wextra -Werror -O2
-CFLAGS  += -D_FILE_OFFSET_BITS=64
-LDFLAGS += -lm
+# DEFS is separate from CFLAGS so a command-line or environment CFLAGS
+# override (make CFLAGS=..., dpkg-buildflags) cannot drop LFS support.
+DEFS     = -D_FILE_OFFSET_BITS=64
+LDLIBS  += -lm
 
 PREFIX  ?= /usr/local
 DESTDIR ?=
@@ -14,7 +16,7 @@ MAN  = $(PROG).1
 all: $(PROG)
 
 $(PROG): compbench.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(DEFS) -o $@ $< $(LDFLAGS) $(LDLIBS)
 
 install: $(PROG) $(MAN)
 	install -d $(DESTDIR)$(PREFIX)/bin

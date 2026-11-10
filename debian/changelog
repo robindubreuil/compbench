@@ -1,4 +1,4 @@
-compbench (2.3-1) unstable; urgency=medium
+compbench (2.3) unstable; urgency=medium
 
   * Fix read benchmark measuring cached data instead of disk: drop
     page cache before the cold read test.
@@ -15,8 +15,46 @@ compbench (2.3-1) unstable; urgency=medium
   * Refactor test loop to eliminate duplication; unify disk-stat
     readers; poll for partition nodes instead of a fixed sleep.
   * Move large result arrays off the stack.
+  * Fix exit status on user abort: declining any confirmation prompt
+    now always exits 1 (was 0 at the first prompt), matching the
+    manual page.
+  * curl: pass --fail so HTTP error pages are not saved as archives.
+  * Preserve exact source permission bits when copying (umask no
+    longer clears group/other bits).
+  * Compute throughput standard deviation with Welford's method
+    (numerically stable).
+  * Switch to native Debian packaging (3.0 (native), version 2.3):
+    add debian/source/format, debian/copyright, debian/docs.
+  * Document measurement caveats in README and manual page.
+  * Exit non-zero when any benchmark test fails (was: exit 0 with
+    missing rows); report the failure count, and error out when no
+    results were collected at all.
+  * Mount-safe cleanup: umount2(MNT_DETACH) fallback, and never
+    rm -rf the temp tree while a filesystem is still mounted on it
+    (previously a busy mount could be deleted through).
+  * Validate DEVICE is a block device before the erasure prompt, and
+    show the disk model/size above the prompt so the target can be
+    verified before confirming.
+  * Accept a bare "yes" (no trailing newline) at the erasure prompt.
+  * Reject configurations requesting more than 4096 tests up front
+    (lower --repeat or narrow --zstd) instead of stopping mid-run when
+    result storage fills; removes the runtime cap warning path.
+  * Warn when the cold read-back of a test filesystem fails instead of
+    silently reporting zero read metrics for that row.
+  * debian/rules: build with dpkg-buildflags (hardening=+all) instead
+    of fixed CFLAGS; the package now gets full RELRO/BIND_NOW, PIE,
+    stack protector and FORTIFY.
+  * Makefile: keep -D_FILE_OFFSET_BITS=64 when CFLAGS is overridden on
+    the command line; link -lm via LDLIBS.
+  * CI: build all .deb architectures on the same debian:bookworm
+    baseline (the native amd64 package no longer builds on Ubuntu
+    while cross arches build on Debian).
+  * test.sh: check xz/tar/sgdisk/mountpoint prerequisites, cover the
+    new device and test-count validation, verify a read-only device
+    run reports total failure and exits 1, and check for stale mounts
+    and leftover temp dirs at the end of the suite.
 
- -- Robin DUBREUIL <robin@dubreuil.pro>  Sun, 14 Jun 2026 12:00:00 +0000
+ -- Robin DUBREUIL <robin@dubreuil.pro>  Tue, 10 Nov 2026 21:00:00 +0100
 
 compbench (2.2-1) unstable; urgency=medium
 

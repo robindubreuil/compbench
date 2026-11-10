@@ -8,6 +8,36 @@ on:
     branches: [main]
 
 jobs:
+  analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make
+
+      - name: Build with gcc -fanalyzer
+        run: make CFLAGS="-Wall -Wextra -Werror -O2 -fanalyzer"
+
+  test-ubuntu-24-04:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make btrfs-progs xz-utils gdisk curl
+
+      - name: Run Tests
+        run: sudo bash test.sh
+
   build:
     strategy:
       fail-fast: false
@@ -15,19 +45,14 @@ jobs:
         include:
           - debarch: amd64
             platform: linux/amd64
-            native: true
           - debarch: i386
-            platform: linux/i386
-            native: false
+            platform: linux/386
           - debarch: arm64
             platform: linux/arm64
-            native: false
           - debarch: armhf
             platform: linux/arm/v7
-            native: false
           - debarch: armel
             platform: linux/arm/v5
-            native: false
 
     runs-on: ubuntu-latest
 
@@ -35,32 +60,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v6
 
-      - name: Install Build Dependencies (Native amd64)
-        if: matrix.native
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y dpkg-dev debhelper build-essential fakeroot btrfs-progs xz-utils gdisk curl
-
-      - name: Build (Native amd64)
-        if: matrix.native
-        run: make
-
-      - name: Run Tests (Native amd64)
-        if: matrix.native
-        run: sudo bash test.sh
-
-      - name: Build Debian Package (Native amd64)
-        if: matrix.native
-        run: |
-          dpkg-buildpackage -us -uc
-          mv ../compbench_*.deb ./
-
-      - name: Set up QEMU (Cross-arch)
-        if: ${{ !matrix.native }}
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
-      - name: Build Debian Package (Cross-arch ${{ matrix.debarch }})
-        if: ${{ !matrix.native }}
+      # All architectures build on the same Debian baseline so the
+      # produced packages share one toolchain and hardening set.
+      - name: Build Debian Package (${{ matrix.debarch }})
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
             -v "$PWD:/src" -w /src \

@@ -28,7 +28,7 @@ cleanup() {
 	if [ -d "${TESTDIR}/mnt" ]; then
 		umount "${TESTDIR}/mnt" 2>/dev/null || true
 	fi
-	rm -rf "$TESTDIR"
+	/bin/rm -rf "$TESTDIR"
 	echo ""
 	echo "Cleanup done. Passed: $PASSED, Failed: $FAILED"
 }
@@ -151,6 +151,10 @@ assert_exit "no args" 1 "$COMPBENCH"
 assert_exit "invalid zstd range -16-5" 1 "$COMPBENCH" --zstd -16-5 /dev/loop0 foo.tar.xz
 assert_exit "invalid zstd range 5-3" 1 "$COMPBENCH" --zstd 5-3 /dev/loop0 foo.tar.xz
 assert_exit "invalid zstd range 16-16" 1 "$COMPBENCH" --zstd 16-16 /dev/loop0 foo.tar.xz
+assert_exit "invalid zstd range 0" 1 "$COMPBENCH" --zstd 0 /dev/loop0 foo.tar.xz
+assert_exit "invalid zstd range 0-5" 1 "$COMPBENCH" --zstd 0-5 /dev/loop0 foo.tar.xz
+assert_exit "zstd level out of range (huge)" 1 "$COMPBENCH" --zstd 4294967296 /dev/loop0 foo.tar.xz
+assert_exit "repeat out of int range" 1 "$COMPBENCH" -n 4294967296 /dev/loop0 foo.tar.xz
 assert_exit "invalid force mode" 1 "$COMPBENCH" -f invalid /dev/loop0 foo.tar.xz
 assert_exit "repeat 0" 1 "$COMPBENCH" -n 0 /dev/loop0 foo.tar.xz
 assert_exit "hdd 0" 1 "$COMPBENCH" --hdd 0 /dev/loop0 foo.tar.xz
@@ -194,7 +198,7 @@ echo ""
 # Test 5: Minimal benchmark (1 zstd level, 1 repeat)
 # ============================================================
 echo "=== Test 5: Minimal benchmark (zstd:1 only, 1 repeat) ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -v "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test5.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -v "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test5.log" ||
 	fail "basic benchmark failed"
 
 assert_output "results table present" "${TESTDIR}/test5.log" "Benchmark Results"
@@ -214,7 +218,7 @@ assert_output "estimated data written" "${TESTDIR}/test5.log" "Estimated total d
 # ============================================================
 echo "=== Test 6: CSV export ==="
 CSVPATH="${TESTDIR}/results.csv"
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -o "$CSVPATH" "$LOOP" "$ARCHIVE" 2>&1 ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -o "$CSVPATH" "$LOOP" "$ARCHIVE" 2>&1 ||
 	fail "benchmark with CSV failed"
 
 [ -f "$CSVPATH" ] && pass "CSV file created" || fail "CSV file not created"
@@ -246,7 +250,7 @@ fi
 # Test 7: Multiple zstd levels
 # ============================================================
 echo "=== Test 7: Multiple zstd levels (1-3) ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-3 "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test7.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-3 "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test7.log" ||
 	fail "multi-level benchmark failed"
 
 for lvl in 1 2 3; do
@@ -258,7 +262,7 @@ assert_output "zlib present" "${TESTDIR}/test7.log" "zlib"
 # Test 8: Repeat (n=2)
 # ============================================================
 echo "=== Test 8: Repeat (n=2, zstd:1 only) ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 2 --zstd 1-1 "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test8.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 2 --zstd 1-1 "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test8.log" ||
 	fail "repeat benchmark failed"
 
 assert_output "averaging message" "${TESTDIR}/test8.log" "averaged over 2 runs"
@@ -267,7 +271,7 @@ assert_output "averaging message" "${TESTDIR}/test8.log" "averaged over 2 runs"
 # Test 9: Force mode (both)
 # ============================================================
 echo "=== Test 9: Force mode (both, zstd:1 only) ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f both "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test9.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f both "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test9.log" ||
 	fail "force=both benchmark failed"
 
 assert_output "standard variant" "${TESTDIR}/test9.log" "standard"
@@ -278,12 +282,14 @@ assert_output "comparison headers" "${TESTDIR}/test9.log" "WrRate%"
 assert_output "comparison has read rate" "${TESTDIR}/test9.log" "RdRate%"
 assert_output "comparison has WrCPU header" "${TESTDIR}/test9.log" "WrCPU%"
 assert_output "comparison has RdCPU header" "${TESTDIR}/test9.log" "RdCPU%"
+assert_output "results table title" "${TESTDIR}/test9.log" "Benchmark Results:"
+assert_output "results table columns" "${TESTDIR}/test9.log" "WrMiB/s.*RdMiB/s.*RdCPU%"
 
 # ============================================================
 # Test 10: Force mode (all)
 # ============================================================
 echo "=== Test 10: Force mode (all, zstd:1 only) ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f all "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test10.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f all "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test10.log" ||
 	fail "force=all benchmark failed"
 
 assert_output "force applied" "${TESTDIR}/test10.log" "force"
@@ -292,7 +298,7 @@ assert_output "force applied" "${TESTDIR}/test10.log" "force"
 # Test 11: Force mode (zstd)
 # ============================================================
 echo "=== Test 11: Force mode (zstd, zstd:1 only) ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f zstd "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test11.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f zstd "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test11.log" ||
 	fail "force=zstd benchmark failed"
 
 assert_output "zstd is forced" "${TESTDIR}/test11.log" "force"
@@ -302,7 +308,7 @@ assert_output "lzo still present" "${TESTDIR}/test11.log" "lzo"
 # Test 12: Force mode (lzo)
 # ============================================================
 echo "=== Test 12: Force mode (lzo, zstd:1 only) ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f lzo "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test12.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f lzo "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test12.log" ||
 	fail "force=lzo benchmark failed"
 
 assert_output "lzo is forced" "${TESTDIR}/test12.log" "force"
@@ -328,7 +334,7 @@ fi
 # Test 14: --no-integrity-check
 # ============================================================
 echo "=== Test 14: --no-integrity-check ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 --no-integrity-check "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test14.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 --no-integrity-check "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test14.log" ||
 	fail "no-integrity-check failed"
 
 assert_not_output "integrity check skipped" "${TESTDIR}/test14.log" "Checking archive integrity"
@@ -337,7 +343,7 @@ assert_not_output "integrity check skipped" "${TESTDIR}/test14.log" "Checking ar
 # Test 15: Verbose mode details
 # ============================================================
 echo "=== Test 15: Verbose mode ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -v "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test15.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -v "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test15.log" ||
 	fail "verbose mode failed"
 
 assert_output "verbose mount info" "${TESTDIR}/test15.log" "Mounted"
@@ -368,7 +374,7 @@ fi
 # ============================================================
 echo "=== Test 17: CSV with force=both ==="
 CSVPATH2="${TESTDIR}/results_both.csv"
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f both -o "$CSVPATH2" "$LOOP" "$ARCHIVE" 2>&1 ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f both -o "$CSVPATH2" "$LOOP" "$ARCHIVE" 2>&1 ||
 	fail "force=both CSV benchmark failed"
 
 COUNT_STD=$(grep -c "standard" "$CSVPATH2" || true)
@@ -383,7 +389,7 @@ fi
 # Test 18: Single zstd level (--zstd 5)
 # ============================================================
 echo "=== Test 18: Single zstd level (--zstd 5) ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 5 "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test18.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 5 "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test18.log" ||
 	fail "single zstd level benchmark failed"
 
 assert_output "zstd:5 present" "${TESTDIR}/test18.log" "zstd:5"
@@ -400,7 +406,7 @@ truncate -s 3G "$DISKIMG2"
 LOOP2=$(losetup --find --show --partscan "$DISKIMG2")
 echo "HDD loop device: $LOOP2"
 
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 --hdd 20 "$LOOP2" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test19.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 --hdd 20 "$LOOP2" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test19.log" ||
 	fail "HDD mode benchmark failed"
 
 assert_output "HDD begin location" "${TESTDIR}/test19.log" "begin"
@@ -418,7 +424,7 @@ fi
 # Test 20: Test count displayed correctly
 # ============================================================
 echo "=== Test 20: Test count accuracy ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-3 "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test20.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-3 "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test20.log" ||
 	fail "test count benchmark failed"
 
 if grep -q "6 tests" "${TESTDIR}/test20.log"; then
@@ -431,21 +437,21 @@ fi
 # Test 21: Signal handling (SIGINT during benchmark)
 # ============================================================
 echo "=== Test 21: Signal handling ==="
-(
-	printf 'yes\ny\n'
-	sleep 5
-) | "$COMPBENCH" -n 1 --zstd 1-15 -v "$LOOP" "$ARCHIVE" >"${TESTDIR}/test21.log" 2>&1 &
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-15 -v "$LOOP" "$ARCHIVE" >"${TESTDIR}/test21.log" 2>&1 &
 CBPID=$!
-sleep 3
-kill -INT $CBPID 2>/dev/null || true
-wait $CBPID 2>/dev/null || true
 
-if grep -q "Interrupted" "${TESTDIR}/test21.log" 2>/dev/null; then
-	pass "signal handled with interrupted message"
-elif grep -q "Cleaning up" "${TESTDIR}/test21.log" 2>/dev/null; then
-	pass "signal handled with cleanup message"
+# Interrupt only once the benchmark is actually running.
+for _ in $(seq 1 150); do
+	grep -q "Test " "${TESTDIR}/test21.log" 2>/dev/null && break
+	sleep 0.2
+done
+kill -INT $CBPID 2>/dev/null || true
+wait $CBPID 2>/dev/null && CBRC=0 || CBRC=$?
+
+if [ "$CBRC" -eq 1 ] && grep -q "Interrupted" "${TESTDIR}/test21.log" 2>/dev/null; then
+	pass "SIGINT handled (Interrupted message, exit 1)"
 else
-	pass "signal handling (benchmark may have completed before signal)"
+	fail "SIGINT handling — exit $CBRC, Interrupted message missing"
 fi
 
 # ============================================================
@@ -460,7 +466,7 @@ assert_output "warning before abort" "${TESTDIR}/test22.log" "WARNING"
 # Test 23: Force mode (none, explicit)
 # ============================================================
 echo "=== Test 23: Force mode (none, zstd:1 only) ==="
-printf 'yes\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f none "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test23.log" ||
+printf 'yes\ny\ny\n' | "$COMPBENCH" -n 1 --zstd 1-1 -f none "$LOOP" "$ARCHIVE" 2>&1 | tee "${TESTDIR}/test23.log" ||
 	fail "force=none benchmark failed"
 
 assert_output "standard variant with -f none" "${TESTDIR}/test23.log" "standard"

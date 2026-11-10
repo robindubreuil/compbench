@@ -318,11 +318,22 @@ get_available_ram(void)
 static void
 drop_caches(void)
 {
+	static int warned;
+	int err = 0;
 	FILE *f = fopen("/proc/sys/vm/drop_caches", "w");
-	if (!f)
-		return;
-	fprintf(f, "3\n");
-	fclose(f);
+	if (!f) {
+		err = errno;
+	} else {
+		if (fprintf(f, "3\n") < 0)
+			err = errno;
+		if (fclose(f) != 0 && err == 0)
+			err = errno;
+	}
+	if (err && !warned) {
+		warned = 1;
+		msg("warning: cannot drop page cache: %s; "
+		    "read results may be inflated\n", strerror(err));
+	}
 }
 
 /* ------------------------------------------------------------------ */
@@ -359,8 +370,10 @@ run_cmd(const char *prog, ...)
 		_exit(127);
 	}
 	int status;
-	if (waitpid(pid, &status, 0) < 0)
-		return -1;
+	while (waitpid(pid, &status, 0) < 0) {
+		if (errno != EINTR)
+			return -1;
+	}
 	return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
@@ -413,7 +426,7 @@ copy_single_file(const char *src, const char *dst, mode_t mode)
 			if (n <= 0)
 				break;
 		} else {
-			char buf[BUF_SIZE];
+			static char buf[BUF_SIZE];
 			size_t toread = remaining > (off_t)sizeof(buf)
 					? sizeof(buf)
 					: (size_t)remaining;
@@ -594,7 +607,7 @@ cleanup(void)
 		g_st.tmpfs_mounted = 0;
 	}
 	if (g_st.tmpdir[0]) {
-		run_cmd("rm", "-rf", g_st.tmpdir, NULL);
+		run_cmd("/bin/rm", "-rf", g_st.tmpdir, NULL);
 		g_st.tmpdir[0] = '\0';
 	}
 }
@@ -649,6 +662,21 @@ wait_for_block_dev(const char *path, int timeout_ms)
 		usleep(100000);
 	}
 	return -1;
+}
+
+/* Ask the kernel to re-read the partition table after sgdisk rewrote
+ * it (BLKRRPART), so the freshly created partitions become usable. */
+static int
+reread_partition_table(const char *disk)
+{
+	int fd = open(disk, O_RDONLY);
+	if (fd < 0)
+		return -1;
+	int rc = ioctl(fd, BLKRRPART, 0);
+	int saved = errno;
+	close(fd);
+	errno = saved;
+	return rc;
 }
 
 static const char *
@@ -908,7 +936,7 @@ run_single_test(const char *device, const char *location,
 	if (mrc < 0) {
 		msg("warning: remount failed for read test: %s\n",
 		    strerror(errno));
-		return 0;
+		return -1;
 	}
 	g_st.dev_mounted = 1;
 
@@ -1221,7 +1249,7 @@ print_results_table(struct avg *avgs, int navg)
 		snprintf(tmp, sizeof(tmp), "%.1f", avgs[i].read_cpu_pct);
 		v = col_width("RdCPU%", tmp);			if (v > wrc) wrc = v;
 		if (isfinite(avgs[i].sec_per_reduction))
-			snprintf(tmp, sizeof(tmp), "%.2f", avgs[i].sec_per_reduction);
+			snprintf(tmp, sizeof(tmp), "%.3f", avgs[i].sec_per_reduction);
 		else
 			snprintf(tmp, sizeof(tmp), "inf");
 		v = col_width("Sec/Red", tmp);			if (v > wsr) wsr = v;
@@ -1240,25 +1268,27 @@ print_results_table(struct avg *avgs, int navg)
 	    wwd, "WrDisk*", wrd, "RdDisk*", wra, "Ratio",
 	    wwc, "WrCPU%", wrc, "RdCPU%", wsr, "Sec/Red", wf, "Force", wn, "n");
 
-	int sep = wl + 1 + wt + 1 + wws + 1 + wrr + 1 + wwd + 1 + wrd + 1 + wra + 1 + wwc + 1 + wrc + 1 + wsr + 1 + wf + 1 + wn;
-	for (int i = 0; i < sep + 9; i++)
+	/* 12 columns joined by two spaces */
+	int sep = wl + wt + wws + wrr + wwd + wrd + wra + wwc + wrc + wsr + wf + wn
+		+ 2 * 11;
+	for (int i = 0; i < sep; i++)
 		msg("-");
 	msg("\n");
 
 	for (int i = 0; i < navg; i++) {
 		char sr[16];
 		if (isfinite(avgs[i].sec_per_reduction))
-			snprintf(sr, sizeof(sr), "%.2f", avgs[i].sec_per_reduction);
+			snprintf(sr, sizeof(sr), "%.3f", avgs[i].sec_per_reduction);
 		else
 			snprintf(sr, sizeof(sr), "inf");
 
-		msg("%-*s  %-*s  %*.1f  %*.1f  %*.1f  %*.1f  %.4f  %*.1f  %*.1f  %*s  %-*s  %d\n",
+		msg("%-*s  %-*s  %*.1f  %*.1f  %*.1f  %*.1f  %*.*f  %*.1f  %*.1f  %*s  %-*s  %*d\n",
 		    wl, avgs[i].location, wt, avgs[i].target,
 		    wws, avgs[i].rate_sync_mib,
 		    wrr, avgs[i].read_rate_mib,
 		    wwd, avgs[i].disk_rate_sync_mib,
 		    wrd, avgs[i].read_disk_rate_mib,
-		    avgs[i].ratio, wwc, avgs[i].cpu_pct,
+		    wra, 4, avgs[i].ratio, wwc, avgs[i].cpu_pct,
 		    wrc, avgs[i].read_cpu_pct,
 		    wsr, sr, wf, avgs[i].force_label, wn, avgs[i].count);
 	}
@@ -1313,7 +1343,7 @@ append_interpolated(struct avg *avgs, int navg, int max_avgs)
 			a->sec_per_reduction = (sr1 + sr2) / 2;
 		else
 			a->sec_per_reduction = INFINITY;
-		a->count = 0;
+		a->count = avgs[i].count + avgs[found].count;
 		added++;
 	}
 
@@ -1387,7 +1417,7 @@ print_best(struct avg *avgs, int navg)
 		    subset[ci].cpu_pct, subset[ci].force_label);
 		char sr_buf[32];
 		if (isfinite(subset[bi].sec_per_reduction))
-			snprintf(sr_buf, sizeof(sr_buf), "%.2f",
+			snprintf(sr_buf, sizeof(sr_buf), "%.3f",
 				 subset[bi].sec_per_reduction);
 		else
 			snprintf(sr_buf, sizeof(sr_buf), "inf");
@@ -1404,10 +1434,10 @@ print_comparison(struct avg *avgs, int navg)
 		return;
 
 	msg("\nForce vs Standard Comparison (percentage differences):\n");
-	msg("%-10s %-10s %10s %10s %10s %10s %10s %10s\n",
+	msg("%-10s %-10s %10s %10s %10s %10s %10s %10s %10s\n",
 	    "Location", "Target", "Time%", "WrRate%", "RdRate%",
 	    "Compr%", "Ratio%", "WrCPU%", "RdCPU%");
-	msg("----------------------------------------------------------------------------------------------------------\n");
+	msg("--------------------------------------------------------------------------------------------------\n");
 
 	for (int i = 0; i < navg; i++) {
 		if (strcmp(avgs[i].force_label, "standard") != 0)
@@ -1548,7 +1578,8 @@ parse_int_opt(const char *s, const char *opt)
 	char *end;
 	errno = 0;
 	long v = strtol(s, &end, 10);
-	if (errno != 0 || end == s || *end != '\0')
+	if (errno != 0 || end == s || *end != '\0'
+	    || v < INT_MIN || v > INT_MAX)
 		die("invalid integer for --%s: '%s'", opt, s);
 	return (int)v;
 }
@@ -1560,23 +1591,24 @@ parse_zstd(const char *s, int *min, int *max)
 	errno = 0;
 	long lo = strtol(s, &end, 10);
 	if (errno != 0 || end == s)
-		die("invalid zstd range: %s (-15..15)", s);
+		die("invalid zstd range: %s (-15..-1 or 1..15)", s);
 
+	long hi;
 	if (*end == '\0') {
-		*min = *max = (int)lo;
+		hi = lo;
 	} else if (*end == '-') {
 		char *end2;
 		errno = 0;
-		long hi = strtol(end + 1, &end2, 10);
+		hi = strtol(end + 1, &end2, 10);
 		if (errno != 0 || end2 == end + 1 || *end2 != '\0')
-			die("invalid zstd range: %s (-15..15)", s);
-		*min = (int)lo;
-		*max = (int)hi;
+			die("invalid zstd range: %s (-15..-1 or 1..15)", s);
 	} else {
-		die("invalid zstd range: %s (-15..15)", s);
+		die("invalid zstd range: %s (-15..-1 or 1..15)", s);
 	}
-	if (*min < -15 || *max > 15 || *min > *max)
-		die("invalid zstd range: %s (-15..15)", s);
+	if (lo < -15 || hi > 15 || lo > hi || (lo <= 0 && hi >= 0))
+		die("invalid zstd range: %s (-15..-1 or 1..15)", s);
+	*min = (int)lo;
+	*max = (int)hi;
 }
 
 static void
@@ -1594,7 +1626,7 @@ usage(FILE *out)
 "\n"
 "Options:\n"
 "  -n, --repeat N          Repeat each test N times (default: 1)\n"
-"      --zstd MIN-MAX      zstd level range (-15..15, default: 1-15)\n"
+"      --zstd MIN-MAX      zstd level range (-15..-1 or 1..15, default: 1-15)\n"
 "  -f, --force MODE        Force mode: none|zstd|lzo|all|both (default: none)\n"
 "      --hdd PERCENT       Test on first/last N%% of disk (1-50)\n"
 "  -o, --output FILE       Export results to CSV\n"
@@ -1785,7 +1817,9 @@ main(int argc, char **argv)
 			die("failed to create first partition");
 		if (run_cmd("sgdisk", end_arg, g_cfg.device, NULL) != 0)
 			die("failed to create second partition");
-		run_cmd("partprobe", g_cfg.device, NULL);
+		if (reread_partition_table(g_cfg.device) < 0)
+			msg("warning: cannot reread partition table: %s\n",
+			    strerror(errno));
 		if (wait_for_block_dev(g_st.part1, 5000) < 0 ||
 		    wait_for_block_dev(g_st.part2, 5000) < 0)
 			die("partitions did not appear: %s, %s",

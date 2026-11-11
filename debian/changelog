@@ -1,4 +1,4 @@
-compbench (2.5) UNRELEASED; urgency=medium
+compbench (2.5) unstable; urgency=medium
 
   * debian/rules: build through dh_auto_build so debhelper can pass
     the cross toolchain when dpkg-buildpackage is invoked with -a
@@ -10,7 +10,7 @@ compbench (2.5) UNRELEASED; urgency=medium
     "Temporary failure resolving" for apt inside the emulated
     container, while the ARM legs resolve fine).
 
- -- Robin DUBREUIL <robin@dubreuil.pro>  Tue, 10 Nov 2026 23:55:00 +0100
+ -- Robin DUBREUIL <robin@dubreuil.pro>  Wed, 11 Nov 2026 10:22:00 +0100
 
 compbench (2.4) unstable; urgency=medium
 

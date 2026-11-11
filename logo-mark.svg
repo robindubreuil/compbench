@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="compbench">
+  <title>compbench</title>
+  <rect width="256" height="256" rx="48" fill="#0F172A"/>
+  <!-- mark: Debian-red C-dial, white needle pegged at 28deg -->
+  <path d="M177.21,55.04 A88,88 0 1 0 177.21,200.96" fill="none" stroke="#A80030" stroke-width="28" stroke-linecap="round"/>
+  <line x1="126.23" y1="128.94" x2="223.36" y2="77.30" stroke="#F8FAFC" stroke-width="20" stroke-linecap="round"/>
+  <circle cx="128" cy="128" r="15" fill="#A80030"/>
+</svg>
